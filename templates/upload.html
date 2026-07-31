@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Upload Sertifikat — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead"><div>
+  <div class="eyebrow">Input Data</div>
+  <h1 class="page" style="margin-top:6px">Upload sertifikat pembayaran</h1>
+</div></div>
+
+<div class="card" style="max-width:520px">
+  <div class="card-b">
+    <p style="font-size:13px;color:var(--ink-2);margin-bottom:18px;line-height:1.6">
+      File <span class="num">.xlsx</span> akan dibaca otomatis. Kamu meninjau dan mengonfirmasi tiap pembayaran sebelum apa pun tersimpan — tidak ada data yang masuk tanpa persetujuanmu.
+    </p>
+    <form method="POST" enctype="multipart/form-data">
+      <label class="fld">File sertifikat pembayaran</label>
+      <label id="drop" style="display:flex;flex-direction:column;align-items:center;gap:8px;
+        border:1.5px dashed var(--line);border-radius:var(--radius);padding:30px;cursor:pointer;
+        text-align:center;transition:.15s;background:var(--surface-2)">
+        <span class="num" style="font-size:22px;color:var(--accent)">＋</span>
+        <span style="font-size:13px;color:var(--ink-2)" id="dropTxt">Klik untuk pilih file <span class="num">.xlsx</span></span>
+        <span class="hint">Maksimal 16 MB</span>
+        <input type="file" name="file" accept=".xlsx" required style="display:none"
+          onchange="document.getElementById('dropTxt').textContent=this.files[0]?.name||'Pilih file'">
+      </label>
+      <button type="submit" class="btn btn-accent btn-block" style="margin-top:16px">Baca & tinjau →</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

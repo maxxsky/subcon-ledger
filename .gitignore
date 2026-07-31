@@ -1,0 +1,19 @@
+# ── Python ──
+__pycache__/
+*.pyc
+venv/
+.env
+
+# ── Runtime data (sensitive — jangan di-push) ──
+data/
+*.db
+uploads/
+backups/
+exports/
+
+# ── Secrets — config lokal dengan password asli TIDAK boleh masuk repo ──
+config.py
+
+# ── OS / editor ──
+.DS_Store
+*.swp

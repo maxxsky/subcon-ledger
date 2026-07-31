@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Masuk — Subcon Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#15233B;--paper:#F1F3EE;--retention:#B9783A;--accent:#1B4D62;--line:#D9DDD3;
+  --paid:#2E6A4E;--alert:#A93F37;--alert-soft:#F0DAD7;--grid:#E5E8E0;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;--display:'Space Grotesk',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--ink);min-height:100vh;display:grid;
+  grid-template-columns:1fr 1fr;color:#fff}
+.left{padding:54px 56px;display:flex;flex-direction:column;justify-content:space-between;
+  position:relative;overflow:hidden}
+.left::before{content:"";position:absolute;inset:0;opacity:.5;
+  background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+  background-size:30px 30px}
+.brand{display:flex;align-items:center;gap:11px;font-family:var(--display);font-weight:600;
+  font-size:19px;position:relative;z-index:1}
+.brand .mark{width:26px;height:26px;border:1.5px solid #fff;border-radius:4px;display:grid;
+  place-items:center}
+.brand .mark::after{content:"";width:10px;height:10px;background:var(--retention);border-radius:2px}
+.lead{position:relative;z-index:1}
+.lead h1{font-family:var(--display);font-weight:600;font-size:34px;line-height:1.12;
+  letter-spacing:-.02em;margin-bottom:14px}
+.lead p{color:rgba(255,255,255,.6);font-size:14px;max-width:340px;line-height:1.6}
+.specimen{position:relative;z-index:1;font-family:var(--mono);font-size:11px;
+  color:rgba(255,255,255,.4);letter-spacing:.04em;display:flex;gap:20px}
+.specimen b{color:var(--retention);font-weight:500}
+.right{background:var(--paper);display:flex;align-items:center;justify-content:center;padding:40px}
+.box{width:100%;max-width:340px}
+.box .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:#828F9C;margin-bottom:8px}
+.box h2{font-family:var(--display);color:var(--ink);font-weight:600;font-size:23px;margin-bottom:26px;
+  letter-spacing:-.01em}
+label{display:block;font-size:12px;font-weight:600;color:#46566B;margin-bottom:6px}
+input{width:100%;font-family:var(--sans);font-size:14px;color:var(--ink);background:#fff;
+  border:1px solid var(--line);border-radius:4px;padding:11px 13px;outline:none;transition:.15s}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #DCE8EC}
+.mb{margin-bottom:16px}
+button{width:100%;background:var(--ink);color:#fff;font-family:var(--sans);font-weight:600;
+  font-size:14px;padding:12px;border:none;border-radius:4px;cursor:pointer;transition:.15s;margin-top:8px}
+button:hover{background:#243a5e}
+.flash{background:var(--alert-soft);border:1px solid #e0b8b3;color:#7e2f29;font-size:13px;
+  padding:10px 13px;border-radius:4px;margin-bottom:18px}
+@media(max-width:760px){body{grid-template-columns:1fr}.left{display:none}}
+</style>
+</head>
+<body>
+<div class="left">
+  <div class="brand"><span class="mark"></span> SUBCON LEDGER</div>
+  <div class="lead">
+    <h1>Setiap rupiah<br>punya posisi.</h1>
+    <p>Lacak pembayaran subkontraktor per termin — dibayar, sisa progres, dan retensi yang ditahan — dalam satu buku besar bersama.</p>
+  </div>
+  <div class="specimen"><span>DIBAYAR <b>━</b></span><span>SISA <b>━</b></span><span>RETENSI <b>▒</b></span></div>
+</div>
+<div class="right">
+  <div class="box">
+    <div class="eyebrow">Akses Internal</div>
+    <h2>Masuk ke buku besar</h2>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}{% for cat,msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+    <form method="POST">
+      <div class="mb"><label>Username</label><input type="text" name="username" autofocus required></div>
+      <div class="mb"><label>Password</label><input type="password" name="password" required></div>
+      <button type="submit">Masuk →</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

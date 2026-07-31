@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Tambah subkon — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead"><div>
+  <a class="back" href="/subcons">← Subkontraktor</a>
+  <h1 class="page" style="margin-top:8px">Tambah subkontraktor</h1>
+</div></div>
+<div class="card" style="max-width:460px">
+  <div class="card-b">
+    <form method="POST">
+      <div style="margin-bottom:14px">
+        <label class="fld">Nama subkontraktor <span class="req">*</span></label>
+        <input class="inp" name="name" required>
+      </div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Tambah subkon</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

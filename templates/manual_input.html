@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Input Manual — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead"><div>
+  <div class="eyebrow">Input Data</div>
+  <h1 class="page" style="margin-top:6px">Input pembayaran manual</h1>
+</div></div>
+
+<div class="card" style="max-width:560px">
+  <div class="card-b">
+    <p style="font-size:13px;color:var(--ink-2);margin-bottom:18px">Untuk subkon yang tidak punya file sertifikat pembayaran.</p>
+    <form method="POST">
+      <div style="margin-bottom:14px">
+        <label class="fld">Subkontraktor <span class="req">*</span></label>
+        <select class="inp" name="subcon_id" id="subSel" required>
+          <option value="">— Pilih subkon —</option>
+          {% for s in subcons %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="margin-bottom:14px">
+        <label class="fld">SPK / PO <span class="req">*</span></label>
+        <select class="inp" name="spk_id" id="spkSel" required>
+          <option value="">— Pilih subkon dulu —</option>
+          <option value="__new__">+ Buat SPK baru</option>
+        </select>
+      </div>
+      <div style="margin-bottom:8px;padding:10px 12px;background:var(--surface-2);border-radius:var(--radius)" id="newSpkFields" class="hide">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label class="fld">Nomer SPK baru</label><input class="inp" name="new_spk_number" placeholder="cth: 12/SPK/..."></div>
+          <div><label class="fld">Deskripsi</label><input class="inp" name="new_work_desc" placeholder="Pekerjaan"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">
+        <label class="fld">Deskripsi <span class="req">*</span></label>
+        <input class="inp" name="description" placeholder="cth: Pembayaran SP-3" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px;margin-bottom:16px">
+        <div><label class="fld">Jumlah (Rp) <span class="req">*</span></label><input class="inp num" type="number" name="amount" placeholder="50000000" min="1" required></div>
+        <div><label class="fld">Tanggal</label><input class="inp" type="date" name="date"></div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Simpan pembayaran</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+document.getElementById('subSel').addEventListener('change',function(){
+  const id=this.value, w=document.getElementById('spkSel');
+  w.innerHTML='<option value="">Memuat…</option>';
+  if(!id){w.innerHTML='<option value="">— Pilih subkon dulu —</option>';return;}
+  fetch('/api/subcon/'+id+'/spks').then(r=>r.json()).then(spks=>{
+    w.innerHTML='<option value="">— Pilih SPK —</option><option value="__new__">+ Buat SPK baru</option>';
+    spks.forEach(x=>{const o=document.createElement('option');o.value=x.id;o.textContent=x.spk_number+' - '+x.work_description.substring(0,40);w.appendChild(o);});
+  });
+});
+document.getElementById('spkSel').addEventListener('change',function(){
+  document.getElementById('newSpkFields').classList.toggle('hide', this.value!='__new__');
+});
+</script>
+{% endblock %}

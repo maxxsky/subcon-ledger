@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ subcon.name }} — Subcon Ledger{% endblock %}
+{% block content %}
+{% set sg = subcon.segments %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/subcons">← Subkontraktor</a>
+    <h1 class="page" style="margin-top:8px">{{ subcon.name }}</h1>
+  </div>
+  <div style="display:flex;gap:7px;align-items:center">
+    {% if subcon.is_overbilling %}<span class="chip chip-alert">Over-billing</span>{% endif %}
+    {% if subcon.is_lunas %}<span class="chip chip-paid">Lunas</span>{% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:18px">
+  <div class="card-b" style="padding:20px 22px">
+    <div style="display:flex;flex-wrap:wrap;gap:30px;margin-bottom:16px">
+      <div><div class="eyebrow">Nilai Kontrak Akhir</div><div class="num" style="font-size:23px;font-weight:600;margin-top:5px">Rp {{ subcon.total_final_contract|money }}</div></div>
+      <div><div class="eyebrow" style="color:var(--paid)">Dibayar</div><div class="num" style="font-size:23px;font-weight:600;margin-top:5px">{{ subcon.total_paid|money }}</div></div>
+      <div><div class="eyebrow" style="color:var(--retention)">Retensi</div><div class="num" style="font-size:23px;font-weight:600;margin-top:5px">{{ subcon.total_retention|money }}</div></div>
+      <div><div class="eyebrow">Sisa Bayar</div><div class="num" style="font-size:23px;font-weight:600;margin-top:5px">{{ [subcon.total_final_contract - subcon.total_paid - subcon.total_retention, 0]|max|money }}</div></div>
+    </div>
+    <div class="bar tall {{ 'over' if sg.overbill }}" style="margin-bottom:12px"><div class="bar-inner">
+      <div class="seg paid" style="width:{{ sg.paid_pct }}%"></div>
+      <div class="seg remaining" style="width:{{ sg.remaining_pct }}%"></div>
+      <div class="seg retention" style="width:{{ sg.retention_pct }}%"></div>
+    </div></div>
+    <div class="barkey"><span><i class="paid"></i> Dibayar</span><span><i class="remaining"></i> Belum dibayar</span><span><i class="retention"></i> Retensi ditahan</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-h">
+    <div class="t">SPK / PO</div>
+    {% if current_role=='admin' %}<button class="btn btn-sm btn-ghost" onclick="document.getElementById('spkForm').classList.toggle('hide')">+ Tambah SPK</button>{% endif %}
+  </div>
+  {% if current_role=='admin' %}
+  <div id="spkForm" class="hide" style="padding:16px 18px;border-bottom:1px solid var(--line-2);background:var(--surface-2)">
+    <form method="POST" action="/subcons/{{ subcon.id }}/add_spk">
+      <div style="display:grid;grid-template-columns:1fr 1fr 130px 70px 140px 110px;gap:8px;align-items:end">
+        <div><label class="fld">Nomer SPK/PO <span class="req">*</span></label><input class="inp" name="spk_number" required></div>
+        <div><label class="fld">Deskripsi pekerjaan</label><input class="inp" name="work_description"></div>
+        <div><label class="fld">Nilai kontrak</label><input class="inp num" type="number" name="contract_value"></div>
+        <div><label class="fld">Ret %</label><input class="inp num" type="number" name="retention_pct" value="0" step="0.1"></div>
+        <div><label class="fld">Tgl retensi lepas</label><input class="inp" type="date" name="retention_release_date"></div>
+        <div><button class="btn btn-primary btn-block" type="submit">Simpan</button></div>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap">
+      <thead><tr>
+        <th style="width:20px"></th><th style="min-width:200px">Nomor SPK/PO</th>
+        <th class="r" style="width:80px">Kontrak</th><th class="r" style="width:80px">Tambah/Kurang</th><th class="r" style="width:80px">Kontrak Akhir</th>
+        <th class="r" style="width:75px">Terbayar</th><th class="r" style="width:70px">Retensi</th><th class="r" style="width:75px">Sisa Bayar</th>
+        <th style="width:130px">Progress</th><th style="width:110px">Retensi Lepas</th>
+      </tr></thead>
+      <tbody>
+        {% for spk in subcon.spks|sort(attribute='spk_number') %}{% set ws=spk.segments %}
+        <tr class="click spkrow" data-tgt="p{{ spk.id }}" style="font-size:11px">
+          <td style="width:20px;padding-right:0"><span class="row-toggle">›</span></td>
+          <td style="min-width:190px"><span style="font-weight:500">{{ spk.spk_number[:45] }}</span><br><span style="font-size:10px;color:var(--ink-3)">{{ spk.work_description[:40] or '—' }}</span></td>
+          <td class="r num">{{ spk.contract_value|money }}</td>
+          <td class="r num" style="color:{{ 'var(--alert)' if spk.total_reductions else 'var(--ink-3)' }}">{% if spk.total_additions %}+{{ spk.total_additions|money }}{% elif spk.total_reductions %}-{{ spk.total_reductions|money }}{% else %}—{% endif %}</td>
+          <td class="r num">{{ spk.final_contract|money }}</td>
+          <td class="r num">{{ spk.total_paid|money }}</td>
+          <td class="r num" style="color:var(--retention)">{{ spk.retention_amount|money }}</td>
+          <td class="r num" style="color:{{ 'var(--paid)' if spk.sisa_bayar==0 else 'var(--ink)' }}">{{ spk.sisa_bayar|money }}</td>
+          <td><div class="bar short {{ 'over' if ws.overbill }}" style="min-width:90px"><div class="bar-inner">
+            <div class="seg paid" style="width:{{ ws.paid_pct }}%"></div>
+            <div class="seg remaining" style="width:{{ ws.remaining_pct }}%"></div>
+            <div class="seg retention" style="width:{{ ws.retention_pct }}%"></div>
+          </div><span class="bar-pct">{{ spk.progress_pct }}%</span></div></td>
+          <td>{% set rls = spk.retention_release_info %}{% if rls %}<span class="num" style="font-size:11px;color:var(--ink-3)">{{ rls.date }}</span>{% elif spk.retention_remaining > 0 and spk.retention_due_date %}<span class="num" style="font-size:11px;color:var(--alert)">⏱ {{ spk.retention_due_date }}</span>{% elif spk.retention_release_date %}<span class="num" style="font-size:11px;color:{{ 'var(--alert)' if spk.retention_due_soon else 'var(--ink-3)' }}">{{ spk.retention_release_date }}</span>{% else %}<span style="color:var(--ink-3)">—</span>{% endif %}</td>
+        </tr>
+        <tr class="subrow" id="p{{ spk.id }}"><td colspan="10"><div class="subwrap">
+          <div class="eyebrow" style="margin:6px 0 8px">Riwayat Pembayaran</div>
+          <table class="tbl" style="background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius)">
+            <thead><tr><th>Deskripsi</th><th class="r">Jumlah</th><th class="r">Kumulatif</th><th class="r">%</th><th>Tanggal</th><th>Sumber</th><th>Oleh</th><th style="width:30px"></th></tr></thead>
+            <tbody>
+              {% set ns = namespace(c=0, prev_pf=none) %}
+              {% for p in spk.payments %}{% set ns.c = ns.c + p.amount %}
+              {% set pv = (ns.c / spk.payable * 100)|round(1) if spk.payable>0 else 0 %}
+              {% set is_ret = (not p.is_dp) and ns.prev_pf is not none and p.progress_factor and ns.prev_pf == p.progress_factor %}
+              {% set ns.prev_pf = p.progress_factor if p.progress_factor else ns.prev_pf %}
+              <tr style="font-size:11px">
+                <td>{{ p.description }}{% if p.is_dp %} <span class="chip chip-accent">DP</span>{% endif %}</td>
+                <td class="r num" style="font-weight:600">{{ p.amount|money }}</td>
+                <td class="r num" style="color:var(--ink-3)">{{ ns.c|money }}</td>
+                <td class="r num">{% if p.is_dp %}—{% elif is_ret %}Retensi{% elif p.progress_factor %}{{ (p.progress_factor * 100)|round(2) }}%{% else %}{{ pv }}%{% endif %}</td>
+                <td class="num" style="font-size:11px">{{ p.date or '—' }}</td>
+                <td>{% if p.source=='sertifikat' %}<span class="chip chip-accent" style="font-size:10px">sertifikat</span>{% else %}<span class="chip chip-mute" style="font-size:10px">manual</span>{% endif %}</td>
+                <td class="num" style="font-size:11px;color:var(--ink-3)">{{ p.created_by or '—' }}</td>
+                <td>{% if current_role=='admin' %}<form method="POST" action="/payment/{{ p.id }}/delete" style="display:inline" onsubmit="return confirm('Hapus pembayaran ini?')"><button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--alert)">×</button></form>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_css %}.hide{display:none}{% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('tr.spkrow').forEach(r=>r.addEventListener('click',()=>{
+  document.getElementById(r.dataset.tgt).classList.toggle('show'); r.classList.toggle('open');
+}));
+</script>
+{% endblock %}

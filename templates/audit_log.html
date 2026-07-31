@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Audit — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead"><div>
+  <div class="eyebrow">Jejak Aktivitas</div>
+  <h1 class="page" style="margin-top:6px">Audit log</h1>
+</div><div class="num" style="font-size:12px;color:var(--ink-3)">200 entri terakhir</div></div>
+
+<div class="card"><div class="card-b flush"><div style="overflow-x:auto">
+<table class="tbl">
+  <thead><tr><th>Waktu</th><th>User</th><th>Aksi</th><th>Entitas</th><th>Detail</th></tr></thead>
+  <tbody>
+    {% for log in logs %}
+    <tr>
+      <td class="num" style="font-size:11.5px;color:var(--ink-3);white-space:nowrap">{{ log.timestamp.strftime('%y-%m-%d %H:%M:%S') }}</td>
+      <td style="font-weight:600">{{ log.user }}</td>
+      <td>
+        {% if 'add' in log.action %}<span class="chip chip-paid">{{ log.action }}</span>
+        {% elif 'delete' in log.action %}<span class="chip chip-alert">{{ log.action }}</span>
+        {% elif 'export' in log.action or 'backup' in log.action %}<span class="chip chip-accent">{{ log.action }}</span>
+        {% else %}<span class="chip chip-mute">{{ log.action }}</span>{% endif %}
+      </td>
+      <td class="num" style="font-size:11.5px;color:var(--ink-3)">{{ log.entity }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</td>
+      <td style="font-size:12px;color:var(--ink-2)">{{ log.detail[:90] }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" style="text-align:center;color:var(--ink-3);padding:18px">Belum ada aktivitas.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div></div></div>
+{% endblock %}

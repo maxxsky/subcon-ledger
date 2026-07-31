@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Subcon Monitor{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#15233B; --ink-2:#46566B; --ink-3:#828F9C;
+  --paper:#F1F3EE; --surface:#FFFFFF; --surface-2:#FAFBF8;
+  --line:#D9DDD3; --line-2:#E7EAE2; --grid:#E5E8E0;
+  --paid:#2E6A4E; --paid-soft:#E2EDE6;
+  --retention:#B9783A; --retention-soft:#F1E4D2;
+  --remaining:#CDD2C8;
+  --alert:#A93F37; --alert-soft:#F0DAD7;
+  --accent:#1B4D62; --accent-soft:#DCE8EC;
+  --radius:4px;
+  --display:'Space Grotesk',system-ui,sans-serif;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--sans); color:var(--ink); background:var(--paper);
+  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  background-image:
+    linear-gradient(var(--grid) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:26px 26px; background-position:-1px -1px;
+}
+.num{font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-0.02em}
+a{color:inherit; text-decoration:none}
+.eyebrow{font-family:var(--mono); font-size:10.5px; font-weight:500; letter-spacing:0.16em;
+  text-transform:uppercase; color:var(--ink-3)}
+
+/* ── NAV ───────────────────────────────────────────── */
+.topbar{background:var(--ink); color:#fff; position:sticky; top:0; z-index:50;
+  border-bottom:1px solid #0c1626}
+.topbar-inner{max-width:1180px; margin:0 auto; padding:0 22px; height:54px;
+  display:flex; align-items:center; gap:28px}
+.brand{display:flex; align-items:center; gap:9px; font-family:var(--display);
+  font-weight:600; font-size:15px; letter-spacing:-0.01em; color:#fff}
+.brand .mark{width:22px; height:22px; border:1.5px solid #fff; border-radius:3px;
+  display:grid; place-items:center; font-size:11px; flex-shrink:0}
+.brand .mark::after{content:""; width:8px; height:8px; background:var(--retention);
+  border-radius:1px}
+.nav{display:flex; align-items:center; gap:2px; margin-left:auto}
+.nav a{font-size:13px; color:rgba(255,255,255,.62); padding:7px 11px; border-radius:var(--radius);
+  transition:color .15s, background .15s; white-space:nowrap}
+.nav a:hover{color:#fff; background:rgba(255,255,255,.07)}
+.nav a.active{color:#fff; background:rgba(255,255,255,.1)}
+.nav .who{color:var(--retention); font-family:var(--mono); font-size:11.5px;
+  padding:7px 11px; letter-spacing:.02em}
+.nav .sep{width:1px; height:18px; background:rgba(255,255,255,.15); margin:0 4px}
+.navtoggle{display:none; margin-left:auto; background:none; border:1px solid rgba(255,255,255,.25);
+  color:#fff; width:34px; height:32px; border-radius:var(--radius); cursor:pointer; font-size:16px}
+
+/* ── LAYOUT ────────────────────────────────────────── */
+.wrap{max-width:1180px; margin:0 auto; padding:26px 22px 60px}
+.pagehead{display:flex; align-items:flex-end; justify-content:space-between;
+  gap:16px; flex-wrap:wrap; margin-bottom:22px}
+h1.page{font-family:var(--display); font-weight:600; font-size:26px; letter-spacing:-0.02em;
+  line-height:1.1}
+.back{font-family:var(--mono); font-size:11px; color:var(--ink-3); letter-spacing:.04em}
+.back:hover{color:var(--accent)}
+
+/* ── CARD ──────────────────────────────────────────── */
+.card{background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--radius)}
+.card-h{display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:13px 18px; border-bottom:1px solid var(--line-2)}
+.card-h .t{font-weight:600; font-size:13.5px}
+.card-b{padding:18px}
+.card-b.flush{padding:0}
+
+/* ── BUTTONS ───────────────────────────────────────── */
+.btn{display:inline-flex; align-items:center; gap:7px; font-family:var(--sans);
+  font-size:13px; font-weight:500; padding:8px 15px; border-radius:var(--radius);
+  border:1px solid transparent; cursor:pointer; transition:.15s; white-space:nowrap}
+.btn-primary{background:var(--ink); color:#fff}
+.btn-primary:hover{background:#243a5e}
+.btn-ghost{background:transparent; color:var(--ink-2); border-color:var(--line)}
+.btn-ghost:hover{border-color:var(--ink-3); color:var(--ink)}
+.btn-accent{background:var(--accent); color:#fff}
+.btn-accent:hover{background:#256079}
+.btn-sm{padding:6px 11px; font-size:12px}
+.btn-block{width:100%; justify-content:center}
+
+/* ── FORMS ─────────────────────────────────────────── */
+label.fld{display:block; font-size:12px; font-weight:600; color:var(--ink-2);
+  margin-bottom:6px}
+label.fld .req{color:var(--alert)}
+.inp,select.inp{width:100%; font-family:var(--sans); font-size:13.5px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+  padding:9px 11px; transition:.15s; outline:none}
+input.inp.num,.inp[type=number]{font-family:var(--mono)}
+.inp:focus,select.inp:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.hint{font-size:11.5px; color:var(--ink-3); margin-top:5px}
+
+/* ── BARS (signature) ─────────────────────────────── */
+.bar{position:relative; height:22px; background:var(--remaining);
+  border-radius:3px; overflow:hidden; border:1px solid rgba(0,0,0,.04)}
+.bar-inner{position:absolute; inset:0; display:flex}
+.seg{height:100%}
+.seg.paid{background:var(--paid)}
+.seg.remaining{background:transparent}
+.seg.retention{background:var(--retention);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.16) 0 3px,transparent 3px 6px)}
+.bar.over .seg.paid{background:var(--alert)}
+.bar-pct{position:absolute; right:7px; top:50%; transform:translateY(-50%);
+  font-family:var(--mono); font-size:11px; font-weight:600; color:var(--ink);
+  text-shadow:0 0 3px rgba(255,255,255,.7); z-index:2}
+.bar.tall{height:30px}
+.bar.short{height:16px}
+.bar.short .bar-pct{font-size:10px}
+@media (prefers-reduced-motion:no-preference){
+  .bar-inner{animation:reveal .85s cubic-bezier(.22,.68,.2,1) both}
+  @keyframes reveal{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+}
+.barkey{display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; color:var(--ink-2)}
+.barkey span{display:inline-flex; align-items:center; gap:6px}
+.barkey i{width:11px; height:11px; border-radius:2px; display:inline-block}
+.barkey i.paid{background:var(--paid)}
+.barkey i.remaining{background:var(--remaining)}
+.barkey i.retention{background:var(--retention);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.2) 0 2px,transparent 2px 4px)}
+
+/* ── BADGE / CHIP ─────────────────────────────────── */
+.chip{display:inline-flex; align-items:center; gap:5px; font-family:var(--mono);
+  font-size:10.5px; font-weight:500; letter-spacing:.04em; text-transform:uppercase;
+  padding:3px 7px; border-radius:3px; border:1px solid transparent}
+.chip-paid{background:var(--paid-soft); color:var(--paid); border-color:#bcd6c8}
+.chip-ret{background:var(--retention-soft); color:#90561f; border-color:#e3cba6}
+.chip-alert{background:var(--alert-soft); color:var(--alert); border-color:#e0b8b3}
+.chip-accent{background:var(--accent-soft); color:var(--accent); border-color:#bcd3da}
+.chip-mute{background:#EEF0EB; color:var(--ink-2); border-color:var(--line)}
+
+/* ── ALERTS ────────────────────────────────────────── */
+.flash{display:flex; gap:10px; padding:11px 15px; border-radius:var(--radius);
+  font-size:13px; margin-bottom:10px; border:1px solid; align-items:flex-start}
+.flash::before{font-family:var(--mono); font-weight:600; flex-shrink:0}
+.flash-success{background:var(--paid-soft); border-color:#bcd6c8; color:#1d4f39}
+.flash-success::before{content:"OK"; color:var(--paid)}
+.flash-danger{background:var(--alert-soft); border-color:#e0b8b3; color:#7e2f29}
+.flash-danger::before{content:"!"; color:var(--alert)}
+.flash-warning{background:var(--retention-soft); border-color:#e3cba6; color:#7a4a1a}
+.flash-warning::before{content:"!"; color:var(--retention)}
+.flash-info{background:var(--accent-soft); border-color:#bcd3da; color:#194858}
+.flash-info::before{content:"i"; color:var(--accent)}
+.flash .x{margin-left:auto; cursor:pointer; color:inherit; opacity:.5; background:none;
+  border:none; font-size:16px; line-height:1}
+.flash .x:hover{opacity:1}
+
+/* ── TABLE ─────────────────────────────────────────── */
+.tbl{width:100%; border-collapse:collapse}
+.tbl thead th{font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--ink-3); text-align:left; padding:10px 14px;
+  border-bottom:1px solid var(--line); background:var(--surface-2)}
+.tbl thead th.r{text-align:right}
+.tbl tbody td{padding:11px 14px; border-bottom:1px solid var(--line-2); vertical-align:middle}
+.tbl tbody td.r{text-align:right}
+.tbl tbody tr.click{cursor:pointer; transition:background .12s}
+.tbl tbody tr.click:hover{background:var(--surface-2)}
+.tbl tfoot td{padding:12px 14px; border-top:2px solid var(--ink); font-weight:600}
+.tbl .name{font-weight:600; font-size:13.5px}
+.row-toggle{color:var(--ink-3); font-family:var(--mono); display:inline-block; width:12px;
+  transition:transform .15s}
+tr.open .row-toggle{transform:rotate(90deg)}
+.subrow{display:none}
+.subrow.show{display:table-row}
+.subrow > td{padding:0; background:var(--surface-2); border-bottom:1px solid var(--line-2)}
+.subwrap{padding:4px 14px 14px}
+
+footer{max-width:1180px; margin:0 auto; padding:18px 22px;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; color:var(--ink-3);
+  border-top:1px solid var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px}
+
+@media(max-width:820px){
+  .navtoggle{display:block}
+  .nav{display:none; position:absolute; top:54px; left:0; right:0; background:var(--ink);
+    flex-direction:column; align-items:stretch; gap:0; padding:8px; margin:0;
+    border-bottom:1px solid #0c1626}
+  .nav.open{display:flex}
+  .nav .sep{display:none}
+  .nav a,.nav .who{padding:11px 13px}
+}
+{% block extra_css %}{% endblock %}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/"><span class="mark"></span> SUBCON&nbsp;LEDGER</a>
+    <button class="navtoggle" onclick="document.getElementById('nav').classList.toggle('open')">≡</button>
+    <nav class="nav" id="nav">
+      <a href="/" class="{% if request.endpoint=='dashboard' %}active{% endif %}">Ringkasan</a>
+      <a href="/subcons" class="{% if request.endpoint in ['subcon_list','subcon_detail'] %}active{% endif %}">Subkontraktor</a>
+      {% if current_role=='admin' %}
+      <a href="/upload" class="{% if request.endpoint in ['upload','upload_preview'] %}active{% endif %}">Upload Sertifikat</a>
+      <a href="/manual" class="{% if request.endpoint=='manual_input' %}active{% endif %}">Input Manual</a>
+      {% endif %}
+      <span class="sep"></span>
+      <a href="/export/excel">Export</a>
+      {% if current_role=='admin' %}
+      <a href="/backup">Backup</a>
+      <a href="/audit" class="{% if request.endpoint=='audit_log' %}active{% endif %}">Audit</a>
+      {% endif %}
+      <span class="who">{{ current_name }}</span>
+      <a href="/logout">Keluar</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for cat,msg in messages %}
+      <div class="flash flash-{{ cat }}">{{ msg }}<button class="x" onclick="this.parentElement.remove()">×</button></div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer>
+  <span>SUBCON&nbsp;LEDGER · MONITORING PEMBAYARAN SUBKONTRAKTOR</span>
+  <span>{{ now.strftime('%Y-%m-%d · %H:%M') }}</span>
+</footer>
+
+{% block extra_js %}{% endblock %}
+</body>
+</html>

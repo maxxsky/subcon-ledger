@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block title %}Ringkasan — Subcon Ledger{% endblock %}
+
+{% block content %}
+{% set seg = {'paid':0,'remaining':0,'retention':0} %}
+{% set _ = seg.update({'retention': grand_retention if grand_retention is defined else 0}) %}
+
+<div class="pagehead">
+  <div>
+    <div class="eyebrow">Posisi Pembayaran Proyek</div>
+    <h1 class="page" style="margin-top:6px">{{ project_name or 'Monitoring Subkontraktor' }}</h1>
+  </div>
+  <div style="text-align:right">
+    <div class="eyebrow">Per {{ now.strftime('%d %b %Y') }}</div>
+    <div class="num" style="font-size:13px;color:var(--ink-2);margin-top:4px">{{ subcons|length }} subkontraktor aktif</div>
+  </div>
+</div>
+
+<!-- ── HERO: project payment position ─────────────────── -->
+{% set ret_total = namespace(v=0) %}
+{% for s in subcons %}{% set ret_total.v = ret_total.v + s.retention_remaining %}{% endfor %}
+{% set paid_pct = (grand_paid / grand_contract * 100) if grand_contract>0 else 0 %}
+{% set ret_pct = (ret_total.v / grand_contract * 100) if grand_contract>0 else 0 %}
+{% set rem_pct = [100 - paid_pct - ret_pct, 0]|max %}
+
+<div class="card" style="margin-bottom:18px;overflow:hidden">
+  <div class="card-b" style="padding:22px 22px 20px">
+    <div style="display:flex;flex-wrap:wrap;gap:26px;justify-content:space-between;align-items:flex-end;margin-bottom:18px">
+      <div>
+        <div class="eyebrow">Nilai Kontrak Akhir</div>
+        <div class="num" style="font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-.02em;line-height:1;margin-top:6px">
+          Rp&nbsp;{{ grand_final_contract|money }}
+        </div>
+      </div>
+      <div style="display:flex;gap:30px">
+        <div>
+          <div class="eyebrow" style="color:var(--paid)">Dibayar</div>
+          <div class="num" style="font-size:21px;font-weight:600;margin-top:5px">{{ grand_paid|money }}</div>
+          <div class="num" style="font-size:11px;color:var(--ink-3);margin-top:2px">{{ paid_pct|round(1) }}% kontrak</div>
+        </div>
+        <div>
+          <div class="eyebrow" style="color:var(--retention)">Retensi Ditahan</div>
+          <div class="num" style="font-size:21px;font-weight:600;margin-top:5px">{{ ret_total.v|money }}</div>
+          <div class="num" style="font-size:11px;color:var(--ink-3);margin-top:2px">{{ ret_pct|round(1) }}% kontrak</div>
+        </div>
+        <div>
+          <div class="eyebrow">Belum Dibayar</div>
+          <div class="num" style="font-size:21px;font-weight:600;margin-top:5px">{{ (grand_contract - grand_paid - ret_total.v)|money }}</div>
+          <div class="num" style="font-size:11px;color:var(--ink-3);margin-top:2px">{{ rem_pct|round(1) }}% kontrak</div>
+        </div>
+      </div>
+    </div>
+    <div class="bar tall" style="margin-bottom:13px">
+      <div class="bar-inner">
+        <div class="seg paid" style="width:{{ paid_pct }}%"></div>
+        <div class="seg remaining" style="width:{{ rem_pct }}%"></div>
+        <div class="seg retention" style="width:{{ ret_pct }}%"></div>
+      </div>
+    </div>
+    <div class="barkey">
+      <span><i class="paid"></i> Dibayar — uang yang sudah disbursed</span>
+      <span><i class="remaining"></i> Belum dibayar — sisa progres</span>
+      <span><i class="retention"></i> Retensi — ditahan sampai masa pemeliharaan</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── status tally + alerts ─────────────────────────── -->
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:18px" id="tallyGrid">
+  <div class="card"><div class="card-b" style="padding:15px 18px">
+    <div class="eyebrow">Lunas</div>
+    <div class="num" style="font-size:30px;font-weight:600;color:var(--paid);margin-top:3px" id="tLunas">—</div>
+    <div style="font-size:11.5px;color:var(--ink-3)">≥ 100% terhadap nilai tertagih</div>
+  </div></div>
+  <div class="card"><div class="card-b" style="padding:15px 18px">
+    <div class="eyebrow">Proses</div>
+    <div class="num" style="font-size:30px;font-weight:600;color:var(--retention);margin-top:3px" id="tProses">—</div>
+    <div style="font-size:11.5px;color:var(--ink-3)">masih berjalan</div>
+  </div></div>
+  <div class="card"><div class="card-b" style="padding:15px 18px">
+    <div class="eyebrow" style="color:var(--alert)">Over-billing</div>
+    <div class="num" style="font-size:30px;font-weight:600;color:var(--alert);margin-top:3px" id="tOver">—</div>
+    <div style="font-size:11.5px;color:var(--ink-3)">terbayar &gt; nilai tertagih</div>
+  </div></div>
+</div>
+
+{% if overbilling %}
+<div class="flash flash-warning"><div><strong>Over-billing terdeteksi:</strong>
+  {{ overbilling[:4]|map(attribute='name')|join(', ') }}{% if overbilling|length>4 %} +{{ overbilling|length-4 }} lain{% endif %}.
+  Terbayar melebihi nilai tertagih — periksa kemungkinan addendum atau koreksi nilai kontrak.</div></div>
+{% endif %}
+{% if retention_due %}
+<div class="flash flash-info"><div><strong>Retensi jatuh tempo ≤ 30 hari:</strong>
+  {% for r in retention_due[:4] %}{{ r.subcon }} ({{ r.date }}){% if not loop.last %}, {% endif %}{% endfor %}
+  {% if retention_due|length>4 %} +{{ retention_due|length-4 }} lain{% endif %}</div></div>
+{% endif %}
+
+{% if retention_schedule %}
+<div class="card" style="margin-bottom:18px">
+  <div class="card-h"><div class="t">⏰ Jadwal Rilis Retensi</div></div>
+  <div class="card-b" style="padding:12px 18px">
+    <table class="tbl" style="font-size:12px;white-space:nowrap">
+      <thead><tr><th>Subkon</th><th>SPK/PO</th><th class="r">Retensi</th><th class="r">Jatuh Tempo</th><th></th></tr></thead>
+      <tbody>
+        {% for item in retention_schedule %}
+        <tr>
+          <td>{{ item.subcon }}</td>
+          <td class="num" style="font-size:11px;color:var(--ink-3)">{{ item.spk }}</td>
+          <td class="r num" style="font-size:11px">{{ item.amount|money }}</td>
+          <td class="r num" style="font-weight:600;color:{% if item.days < 0 %}var(--alert){% elif item.days <= 30 %}var(--accent){% elif item.days <= 90 %}#e6a817{% else %}var(--ink-3){% endif %}">{{ item.due }}</td>
+          <td class="num" style="font-size:11px;color:var(--ink-3)">
+            {% if item.days < 0 %}🔴 lewat {{ -item.days }} hari
+            {% elif item.days == 0 %}🔴 hari ini
+            {% elif item.days <= 30 %}🟡 {{ item.days }} hari lagi
+            {% elif item.days <= 90 %}🟢 {{ item.days }} hari lagi
+            {% else %}⚪ {{ item.days }} hari lagi{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── cashflow ──────────────────────────────────────── -->
+<div class="card" style="margin-bottom:18px">
+  <div class="card-h">
+    <div class="t">Arus Pembayaran Bulanan</div>
+    <div class="eyebrow">12 bulan terakhir</div>
+  </div>
+  <div class="card-b">
+    <div id="cashflow" style="width:100%"></div>
+  </div>
+</div>
+
+<!-- ── ledger table ──────────────────────────────────── -->
+<div class="card">
+  <div class="card-h" style="flex-wrap:wrap;gap:12px">
+    <div class="t">Buku Besar Subkontraktor</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="barkey" style="font-size:11px;margin-right:4px">
+        <span><i class="paid"></i> dibayar</span>
+        <span><i class="remaining"></i> sisa</span>
+        <span><i class="retention"></i> retensi</span>
+      </div>
+      <input class="inp" id="q" placeholder="Cari subkon…" style="width:160px;padding:6px 10px;font-size:12.5px">
+    </div>
+  </div>
+  <div class="card-b flush">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--line-2);padding:8px 14px;flex-wrap:wrap" id="filters">
+      <button class="btn btn-sm btn-ghost flt active" data-f="all" style="border:none">Semua · {{ subcons|length }}</button>
+      <button class="btn btn-sm btn-ghost flt" data-f="lunas" style="border:none">Lunas · {{ lunas_list|length }}</button>
+      <button class="btn btn-sm btn-ghost flt" data-f="proses" style="border:none">Proses · {{ subcons|length - lunas_list|length }}</button>
+      {% if overbilling %}<button class="btn btn-sm btn-ghost flt" data-f="overbilling" style="border:none;color:var(--alert)">Over-billing · {{ overbilling|length }}</button>{% endif %}
+    </div>
+    <div style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th>Subkontraktor</th>
+        <th class="r">Kontrak</th>
+        <th class="r">Dibayar</th>
+        <th class="r">Sisa Tertagih</th>
+        <th style="width:230px">Posisi Pembayaran</th>
+      </tr></thead>
+      <tbody>
+        {% for s in subcons %}{% if s.total_contract>0 %}
+        {% set sg = s.segments %}
+        {% set status = 'overbilling' if s.is_overbilling else 'lunas' if s.is_lunas else 'proses' %}
+        <tr class="click srow" data-status="{{ status }}" data-tgt="d{{ s.id }}">
+          <td>
+            <span class="row-toggle">›</span>
+            <span class="name">{{ s.name }}</span>
+            {% if s.is_overbilling %}<span class="chip chip-alert" style="margin-left:6px">OB</span>{% endif %}
+          </td>
+          <td class="r num">{{ s.total_contract|money }}</td>
+          <td class="r num">{{ s.total_paid|money }}</td>
+          <td class="r num">{{ [s.payable - s.total_paid, 0]|max|money }}</td>
+          <td>
+            <div class="bar {{ 'over' if sg.overbill }}">
+              <div class="bar-inner">
+                <div class="seg paid" style="width:{{ sg.paid_pct }}%"></div>
+                <div class="seg remaining" style="width:{{ sg.remaining_pct }}%"></div>
+                <div class="seg retention" style="width:{{ sg.retention_pct }}%"></div>
+              </div>
+              <span class="bar-pct">{{ s.pct_vs_contract }}%</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="subrow" id="d{{ s.id }}"><td colspan="5"><div class="subwrap">
+          <table class="tbl" style="background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);white-space:nowrap">
+            <thead><tr>
+              <th style="width:20px"></th><th style="min-width:200px">Nomor SPK/PO</th>
+              <th class="r" style="width:80px">Kontrak</th><th class="r" style="width:80px">Tambah/Kurang</th><th class="r" style="width:80px">Kontrak Akhir</th>
+              <th class="r" style="width:75px">Terbayar</th>
+              <th class="r" style="width:70px">Retensi</th><th class="r" style="width:75px">Sisa Bayar</th>
+              <th style="width:130px">Progress</th><th style="width:110px">Retensi Lepas</th>
+            </tr></thead>
+            <tbody>
+              {% for spk in s.spks|sort(attribute='spk_number') %}{% set sg = spk.segments %}
+              <tr style="font-size:11px">
+                <td style="width:20px;padding-right:0"><span class="row-toggle" style="font-size:10px">›</span></td>
+                <td style="min-width:190px"><span style="font-weight:500">{{ spk.spk_number[:40] }}</span><br><span style="font-size:10px;color:var(--ink-3)">{{ spk.work_description[:35] or '—' }}</span></td>
+                <td class="r num">{{ spk.contract_value|money }}</td>
+                <td class="r num" style="color:{{ 'var(--alert)' if spk.total_reductions else 'var(--ink-3)' }}">{% if spk.total_additions %}+{{ spk.total_additions|money }}{% elif spk.total_reductions %}-{{ spk.total_reductions|money }}{% else %}—{% endif %}</td>
+                <td class="r num">{{ spk.final_contract|money }}</td>
+                <td class="r num">{{ spk.total_paid|money }}</td>
+                <td class="r num" style="color:var(--retention)">{{ spk.retention_amount|money }}</td>
+                <td class="r num" style="color:{{ 'var(--paid)' if spk.sisa_bayar==0 else 'var(--ink)' }}">{{ spk.sisa_bayar|money }}</td>
+                <td><div class="bar short {{ 'over' if sg.overbill }}"><div class="bar-inner">
+                  <div class="seg paid" style="width:{{ sg.paid_pct }}%"></div>
+                  <div class="seg remaining" style="width:{{ sg.remaining_pct }}%"></div>
+                  <div class="seg retention" style="width:{{ sg.retention_pct }}%"></div>
+                </div><span class="bar-pct">{{ spk.progress_pct }}%</span></div></td>
+                <td>{% set rls = spk.retention_release_info %}{% if rls %}<span class="num" style="font-size:11px;color:var(--ink-3)">{{ rls.date }}</span>{% elif spk.retention_remaining > 0 and spk.retention_due_date %}<span class="num" style="font-size:11px;color:var(--alert)">⏱ {{ spk.retention_due_date }}</span>{% elif spk.retention_release_date %}<span class="num" style="font-size:11px;color:{{ 'var(--alert)' if spk.retention_due_soon else 'var(--ink-3)' }}">{{ spk.retention_release_date }}</span>{% else %}<span style="color:var(--ink-3)">—</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div></td></tr>
+        {% endif %}{% endfor %}
+      </tbody>
+      <tfoot><tr>
+        <td>TOTAL · {{ subcons|length }} subkon</td>
+        <td class="r num">{{ grand_contract|money }}</td>
+        <td class="r num">{{ grand_paid|money }}</td>
+        <td class="r num">{{ [grand_contract - grand_paid - ret_total.v, 0]|max|money }}</td>
+        <td><div class="bar"><div class="bar-inner">
+          <div class="seg paid" style="width:{{ paid_pct }}%"></div>
+          <div class="seg remaining" style="width:{{ rem_pct }}%"></div>
+          <div class="seg retention" style="width:{{ ret_pct }}%"></div>
+        </div><span class="bar-pct">{{ overall_pct }}%</span></div></td>
+      </tr></tfoot>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function fmtM(v){ if(v<500)return '0'; if(v>=1e9)return (v/1e9).toFixed(1)+' M'; if(v>=1e6)return (v/1e6).toFixed(1)+' Jt'; return (v/1e3).toFixed(0)+' Rb'; }
+
+fetch('/api/summary').then(r=>r.json()).then(d=>{
+  document.getElementById('tLunas').textContent = d.totals.lunas;
+  document.getElementById('tProses').textContent = d.totals.proses;
+  document.getElementById('tOver').textContent = d.totals.overbilling;
+  renderCashflow(d.timeline);
+});
+
+function renderCashflow(tl){
+  const host=document.getElementById('cashflow');
+  const labels=tl.labels, vals=tl.amounts;
+  if(!labels.length){ host.innerHTML='<div style="color:var(--ink-3);font-size:13px;padding:18px 0">Belum ada data pembayaran bertanggal.</div>'; return; }
+  const W=host.clientWidth||900, H=210, padL=8, padR=8, padT=14, padB=26;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  const max=Math.max(...vals), avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const n=labels.length, gap=10, bw=(innerW-gap*(n-1))/n;
+  const y=v=>padT+innerH-(max>0? v/max*innerH:0);
+  let bars='', lbls='';
+  labels.forEach((lb,i)=>{
+    const x=padL+i*(bw+gap), bh=max>0? vals[i]/max*innerH:0, yy=padT+innerH-bh;
+    bars+=`<g class="cf-col"><rect x="${x.toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(bh,1).toFixed(1)}" rx="2" fill="var(--accent)" opacity="0.88"></rect>`+
+          `<rect x="${x.toFixed(1)}" y="${padT}" width="${bw.toFixed(1)}" height="${innerH}" fill="transparent"><title>${lb} — Rp ${fmtM(vals[i])}</title></rect></g>`;
+    const mo=lb.slice(5);
+    lbls+=`<text x="${(x+bw/2).toFixed(1)}" y="${H-9}" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="var(--ink-3)">${mo}</text>`;
+  });
+  const ay=y(avg);
+  const avgline=`<line x1="${padL}" y1="${ay.toFixed(1)}" x2="${(W-padR).toFixed(1)}" y2="${ay.toFixed(1)}" stroke="var(--retention)" stroke-width="1.3" stroke-dasharray="4 4"></line>`+
+    `<text x="${padL+2}" y="${(ay-6).toFixed(1)}" text-anchor="start" font-family="IBM Plex Mono" font-size="9.5" fill="var(--retention)">rata² ${fmtM(avg)}/bln</text>`;
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="overflow:visible">
+    <style>.cf-col rect:first-child{transition:opacity .15s} .cf-col:hover rect:first-child{opacity:1}</style>
+    ${bars}${avgline}${lbls}</svg>`;
+}
+window.addEventListener('resize',()=>{ fetch('/api/summary').then(r=>r.json()).then(d=>renderCashflow(d.timeline)); },{passive:true});
+
+// expand rows
+document.querySelectorAll('tr.srow').forEach(r=>{
+  r.addEventListener('click',()=>{
+    const sub=document.getElementById(r.dataset.tgt);
+    r.classList.toggle('open'); sub.classList.toggle('show');
+  });
+});
+// filter + search
+const q=document.getElementById('q');
+function apply(){
+  const term=(q.value||'').toLowerCase();
+  const f=document.querySelector('.flt.active').dataset.f;
+  document.querySelectorAll('tr.srow').forEach(r=>{
+    const ok=(f==='all'||r.dataset.status===f) && r.textContent.toLowerCase().includes(term);
+    r.style.display=ok?'':'none';
+    if(!ok){ const s=document.getElementById(r.dataset.tgt); s.classList.remove('show'); r.classList.remove('open'); }
+  });
+}
+q.addEventListener('input',apply);
+document.querySelectorAll('.flt').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.flt').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); apply();
+}));
+</script>
+{% endblock %}

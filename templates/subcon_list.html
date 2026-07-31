@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Subkontraktor — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <div class="eyebrow">Direktori</div>
+    <h1 class="page" style="margin-top:6px">Subkontraktor</h1>
+  </div>
+  {% if current_role=='admin' %}<a href="/subcons/new" class="btn btn-primary">+ Tambah subkon</a>{% endif %}
+</div>
+
+<div class="card">
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th>Subkontraktor</th><th>SPK</th>
+        <th class="r">Kontrak</th><th class="r">Dibayar</th><th class="r">Sisa Tertagih</th>
+        <th style="width:200px">Posisi</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        {% for s in subcons %}{% if s.total_contract>0 %}{% set sg=s.segments %}
+        <tr class="click" onclick="location.href='/subcons/{{ s.id }}'">
+          <td class="name">{{ s.name }}</td>
+          <td class="num" style="font-size:11.5px;color:var(--ink-3)">{{ s.spks|length }} SPK</td>
+          <td class="r num">{{ s.total_contract|money }}</td>
+          <td class="r num">{{ s.total_paid|money }}</td>
+          <td class="r num">{{ [s.payable - s.total_paid, 0]|max|money }}</td>
+          <td><div class="bar short {{ 'over' if sg.overbill }}"><div class="bar-inner">
+            <div class="seg paid" style="width:{{ sg.paid_pct }}%"></div>
+            <div class="seg remaining" style="width:{{ sg.remaining_pct }}%"></div>
+            <div class="seg retention" style="width:{{ sg.retention_pct }}%"></div>
+          </div><span class="bar-pct">{{ s.pct_vs_contract }}%</span></div></td>
+          <td>
+            {% if s.is_overbilling %}<span class="chip chip-alert">Over-billing</span>
+            {% elif s.is_lunas %}<span class="chip chip-paid">Lunas</span>
+            {% else %}<span class="chip chip-ret">Proses</span>{% endif %}
+          </td>
+        </tr>
+        {% endif %}{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

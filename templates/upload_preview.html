@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Tinjau Sertifikat — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/upload">← Upload</a>
+    <h1 class="page" style="margin-top:8px">Tinjau sebelum simpan</h1>
+    <div class="num" style="font-size:12px;color:var(--ink-3);margin-top:4px">{{ result.filename }}</div>
+  </div>
+</div>
+
+{% if result.parse_errors %}
+<div class="flash flash-warning"><div><strong>{{ result.parse_errors|length }} sheet gagal dibaca:</strong>
+  {% for e in result.parse_errors %}<br>· <span class="num">{{ e.sheet }}</span> — {{ e.error }}{% endfor %}</div></div>
+{% endif %}
+
+<div class="flash flash-info"><div>Ditemukan <strong>{{ result.payments|length }}</strong> pembayaran. Subkon yang belum ada bisa langsung <strong>dibuat dari file</strong> (nama &amp; SPK terisi otomatis). Centang yang ingin disimpan lalu konfirmasi — <strong>tidak ada yang tersimpan sebelum kamu menekan tombol simpan.</strong></div></div>
+
+<form method="POST" action="/upload/preview">
+  {% for i, p in result.payments|enumerate %}
+  {% set conf = p._match_confidence %}
+  {% set is_new = p._default_mode == 'new' %}
+  {% set accent = 'var(--paid)' if conf in ['spk','name'] else 'var(--accent)' %}
+  <div class="card" style="margin-bottom:12px;border-left:3px solid {{ accent }}">
+    <div class="card-h" style="background:{{ 'var(--paid-soft)' if conf in ['spk','name'] else 'var(--accent-soft)' }};border-bottom:1px solid var(--line-2)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="chip {{ 'chip-paid' if conf in ['spk','name'] else 'chip-accent' }}">SP-{{ p.payment_num }}</span>
+        <strong style="font-size:13.5px">{{ p.subcon_name }}</strong>
+        {% if conf == 'spk' %}<span class="num" style="font-size:11px;color:var(--paid)">✓ cocok via SPK {{ p.spk_number }}</span>
+        {% elif conf == 'name' %}<span class="num" style="font-size:11px;color:var(--paid)">✓ cocok via nama</span>
+        {% else %}<span class="num" style="font-size:11px;color:var(--accent)">subkon baru — akan dibuat dari file</span>{% endif %}
+      </div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;cursor:pointer">
+        <input type="checkbox" name="confirm_{{ i }}" value="1" {% if conf in ['spk','name'] or is_new %}checked{% endif %}> Simpan
+      </label>
+    </div>
+    <div class="card-b">
+      <div style="display:grid;grid-template-columns:1fr 1.1fr;gap:22px">
+        <!-- file data -->
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px">Data dari file</div>
+          <table class="tbl" style="font-size:12.5px">
+            <tbody>
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">Subkon</td><td style="padding:5px 0;border:none;font-weight:600">{{ p.subcon_name }}</td></tr>
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">SPK / PO</td><td class="num" style="padding:5px 0;border:none">{{ p.spk_number or '—' }}</td></tr>
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">Pekerjaan</td><td style="padding:5px 0;border:none">{{ p.work_desc or '—' }}</td></tr>
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">Nilai kontrak</td><td class="num" style="padding:5px 0;border:none">Rp {{ p.contract_value|money }}</td></tr>
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">Net payment</td><td class="num" style="padding:5px 0;border:none;color:var(--paid);font-weight:600">Rp {{ p.net_payment|money }}</td></tr>
+              {% if p.dp_amount>0 %}<tr><td style="color:var(--ink-3);padding:5px 0;border:none">DP</td><td class="num" style="padding:5px 0;border:none">Rp {{ p.dp_amount|money }}</td></tr>{% endif %}
+              <tr><td style="color:var(--ink-3);padding:5px 0;border:none">Tgl Bayar · Retensi</td><td class="num" style="padding:5px 0;border:none">{{ p.date or '—' }} · {{ p.retention_pct }}%</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- assignment -->
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px">Simpan ke</div>
+          <!-- mode toggle -->
+          <div class="seg-toggle" data-i="{{ i }}" style="display:inline-flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:12px">
+            <label class="segopt">
+              <input type="radio" name="mode_{{ i }}" value="existing" {% if not is_new %}checked{% endif %} style="display:none">
+              <span>Subkon yang ada</span>
+            </label>
+            <label class="segopt">
+              <input type="radio" name="mode_{{ i }}" value="new" {% if is_new %}checked{% endif %} style="display:none">
+              <span>Buat subkon baru</span>
+            </label>
+          </div>
+
+          <!-- existing block -->
+          <div class="mode-existing" data-i="{{ i }}" {% if is_new %}style="display:none"{% endif %}>
+            <div style="margin-bottom:10px">
+              <label class="fld">Subkontraktor</label>
+              <select class="inp subSel" name="subcon_id_{{ i }}" data-i="{{ i }}">
+                <option value="">— Pilih subkon —</option>
+                {% if conf in ['spk','name'] and p._matched_subcon %}
+                <option value="{{ p._matched_subcon.id }}" selected>{{ p._matched_subcon.name }}</option>
+                {% else %}
+                {% for s in subcons %}<option value="{{ s.id }}" {% if p._matched_subcon and p._matched_subcon.id==s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+                {% endif %}
+              </select>
+            </div>
+            <div>
+              <label class="fld">Nomer SPK/PO</label>
+              <select class="inp" name="spk_id_{{ i }}" id="spk{{ i }}">
+                <option value="">— Pilih SPK —</option>
+                {% if p._matched_subcon %}{% for spk in p._matched_subcon.spks %}
+                <option value="{{ spk.id }}" {% if p._matched_spk and p._matched_spk.id==spk.id %}selected{% endif %}>{{ spk.spk_number[:55] }}</option>
+                {% endfor %}{% endif %}
+                <option value="__new__">+ Buat SPK baru dari file</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- new block -->
+          <div class="mode-new" data-i="{{ i }}" {% if not is_new %}style="display:none"{% endif %}>
+            <div style="margin-bottom:10px">
+              <label class="fld">Nama subkon baru <span class="req">*</span></label>
+              <input class="inp" name="new_name_{{ i }}" value="{{ p.subcon_name }}">
+            </div>
+            <div style="font-size:11.5px;color:var(--ink-3);line-height:1.5;padding:8px 10px;background:var(--surface-2);border-radius:var(--radius)">
+              Akan dibuat: subkon <strong>{{ p.subcon_name }}</strong> + SPK <strong>{{ p.spk_number or '—' }}</strong> (Rp {{ p.contract_value|money }}, retensi {{ p.retention_pct }}%).
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div style="display:flex;gap:10px;margin-top:16px">
+    <button type="submit" class="btn btn-primary">Simpan yang dicentang</button>
+    <a href="/upload/cancel" class="btn btn-ghost">Batalkan &amp; hapus file</a>
+  </div>
+</form>
+{% endblock %}
+{% block extra_css %}
+.segopt{cursor:pointer}
+.segopt span{display:block;padding:7px 14px;font-size:12.5px;color:var(--ink-2);background:var(--surface);transition:.12s;border-right:1px solid var(--line)}
+.segopt:last-child span{border-right:none}
+.segopt input:checked + span{background:var(--ink);color:#fff;font-weight:600}
+{% endblock %}
+{% block extra_js %}
+<script>
+// mode toggle
+document.querySelectorAll('.seg-toggle').forEach(tg=>{
+  const i=tg.dataset.i;
+  tg.querySelectorAll('input[type=radio]').forEach(r=>r.addEventListener('change',()=>{
+    const ex=document.querySelector('.mode-existing[data-i="'+i+'"]');
+    const nw=document.querySelector('.mode-new[data-i="'+i+'"]');
+    if(r.value==='new'){ ex.style.display='none'; nw.style.display=''; }
+    else{ ex.style.display=''; nw.style.display='none'; }
+  }));
+});
+// SPK dropdown loader
+document.querySelectorAll('.subSel').forEach(sel=>sel.addEventListener('change',function(){
+  const i=this.dataset.i, id=this.value, w=document.getElementById('spk'+i);
+  if(!id){w.innerHTML='<option value="">— Pilih SPK —</option><option value="__new__">+ Buat SPK baru dari file</option>';return;}
+  w.innerHTML='<option value="">Memuat…</option>';
+  fetch('/api/subcon/'+id+'/spks').then(r=>r.json()).then(spks=>{
+    w.innerHTML='<option value="">— Pilih SPK —</option>';
+    spks.forEach(x=>{const o=document.createElement('option');o.value=x.id;o.textContent=x.spk_number+' '+x.work_description.substring(0,35);w.appendChild(o);});
+    const n=document.createElement('option');n.value='__new__';n.textContent='+ Buat SPK baru dari file';w.appendChild(n);
+  });
+}));
+</script>
+{% endblock %}
