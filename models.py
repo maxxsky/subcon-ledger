@@ -41,13 +41,13 @@ class Subcon(db.Model):
 
     @property
     def payable(self):
-        return self.total_contract - self.total_retention
+        return self.total_final_contract - self.total_retention
 
     @property
     def pct_vs_contract(self):
-        if self.total_contract <= 0:
+        if self.total_final_contract <= 0:
             return 0.0
-        return round(self.total_paid / self.total_contract * 100, 2)
+        return round(self.total_paid / self.total_final_contract * 100, 2)
 
     @property
     def pct_vs_payable(self):
