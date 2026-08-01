@@ -65,10 +65,10 @@
 </div></div>
 {% else %}
 
-{% set t_rap = normal_items|sum(attribute='total_rap') %}
-{% set t_terikat = normal_items|sum(attribute='terikat') %}
-{% set t_tersert = normal_items|sum(attribute='tersertifikasi') %}
-{% set t_terbayar = normal_items|sum(attribute='terbayar') %}
+{% set t_rap = normal_items|sum(attribute='total_rap') + c_rap %}
+{% set t_terikat = normal_items|sum(attribute='terikat') + c_terikat %}
+{% set t_tersert = normal_items|sum(attribute='tersertifikasi') + c_tersert %}
+{% set t_terbayar = normal_items|sum(attribute='terbayar') + c_terbayar %}
 {% set t_sisa = t_rap - t_terikat %}
 
 <div class="card">

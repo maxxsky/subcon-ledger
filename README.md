@@ -108,7 +108,8 @@ subcon-monitor/
 │   └── sertifikat.py   # Parser sertifikat .xlsx
 ├── scripts/
 │   ├── hash_passwords.py  # Migrasi password plaintext → hash werkzeug
-│   └── migrate_fase1.py   # One-off migrasi skema (subcons→vendors, payment split)
+│   ├── migrate_fase1.py   # One-off migrasi skema (subcons→vendors, payment split)
+│   └── seed_dummy.py      # Seed data dummy 03-dummy-data.md ke data/subcon_test.db
 ├── migrations/         # Alembic (migrasi skema fase berikutnya)
 ├── templates/          # Jinja2 HTML templates
 ├── uploads/            # File sertifikat yang diupload — gitignored
