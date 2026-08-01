@@ -28,7 +28,8 @@ from sqlalchemy.orm import sessionmaker
 
 from models import (db, Project, BOQItem, RapVersion, RapItem,
                     RiskAllowance, PrelimItem, Vendor, SPK, Certificate, Payment,
-                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation)
+                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation,
+                    Accrual, CvrPeriod, CvrLine, CvrCommentary)
 
 engine = create_engine(f"sqlite:///{TEST_DB}")
 db.metadata.create_all(engine)
@@ -267,6 +268,44 @@ def main():
                   catatan="Tetap masuk cost di CVR meski disputed — lihat metode §3 & §7"),
     ])
 
+    # ── accruals + cvr (Fase 4) — cvr_lines seeded sebagai snapshot manual dummy ──
+    s.add_all([
+        Accrual(id=1, project_id=1, rap_item_id=106, spk_id=2, periode="2026-07",
+                nilai_estimasi=45000000,
+                dasar="Opname lapangan visual — bekisting lantai 3 ~80% terpasang, belum diopname resmi",
+                dibuat_oleh="Brahma", tanggal=d("2026-07-30")),
+    ])
+    s.add_all([
+        CvrPeriod(id=1, project_id=1, periode="2026-06", cutoff_date=d("2026-06-30"),
+                  status="final", disusun_oleh="Brahma", tanggal_final=d("2026-07-03")),
+        CvrPeriod(id=2, project_id=1, periode="2026-07", cutoff_date=d("2026-07-31"),
+                  status="final", disusun_oleh="Brahma", tanggal_final=d("2026-08-03")),
+    ])
+    s.add_all([
+        CvrLine(cvr_period_id=1, rap_item_id=102,
+                value_certified=477405000, value_internal=477405000,
+                cost_actual=477405000, cost_accrual=0, cost_committed_outstanding=0,
+                forecast_cost_to_complete=0, metode_ctc="sisa_lingkup",
+                forecast_final_cost=477405000, forecast_final_value=477405000),
+        CvrLine(cvr_period_id=1, rap_item_id=106,
+                value_certified=189000000, value_internal=189000000,
+                cost_actual=149550000, cost_accrual=30000000, cost_committed_outstanding=120450000,
+                forecast_cost_to_complete=120450000, metode_ctc="sisa_lingkup",
+                forecast_final_cost=300000000, forecast_final_value=300000000),
+        CvrLine(cvr_period_id=2, rap_item_id=106,
+                value_certified=189000000, value_internal=189000000,
+                cost_actual=149550000, cost_accrual=45000000, cost_committed_outstanding=105450000,
+                forecast_cost_to_complete=105450000, metode_ctc="bottom_up",
+                forecast_final_cost=315000000, forecast_final_value=315000000,
+                catatan="Metode CTC diubah ke bottom_up — subkon bekisting mulai telat, forecast naik 15jt dari periode lalu"),
+    ])
+    s.add_all([
+        CvrCommentary(cvr_period_id=1, penyusun="Brahma",
+                      teks="Item 3.3.1 (bekisting): SPK 300jt vs RAP 288jt, buying loss 12jt. Progress 60%, on track. VAR-001 disetujui, tidak berdampak margin signifikan."),
+        CvrCommentary(cvr_period_id=2, penyusun="Brahma",
+                      teks="Item 3.3.1: forecast final cost naik dari 300jt ke 315jt. Sebab: subkon mulai lambat, metode CTC dialihkan ke bottom-up bersama lapangan. VAR-005 (klaim scaffolding, disputed) tetap dimasukkan sebagai cost meski ditolak owner. Tindakan: rapat evaluasi kinerja subkon minggu depan."),
+    ])
+
     s.commit()
     print("Seed dummy selesai →", TEST_DB)
     print(f"  projects={s.query(Project).count()} boq={s.query(BOQItem).count()} "
@@ -276,6 +315,8 @@ def main():
           f"certs={s.query(Certificate).count()} payments={s.query(Payment).count()}")
     print(f"  procurement={s.query(ProcurementRequest).count()} comparisons={s.query(PriceComparison).count()} "
           f"status_logs={s.query(SpkStatusLog).count()} variations={s.query(Variation).count()}")
+    print(f"  accruals={s.query(Accrual).count()} cvr_periods={s.query(CvrPeriod).count()} "
+          f"cvr_lines={s.query(CvrLine).count()} cvr_commentaries={s.query(CvrCommentary).count()}")
 
 
 if __name__ == "__main__":

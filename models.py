@@ -498,6 +498,7 @@ class RapItem(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     spks = db.relationship("SPK", backref="rap_item", lazy=True)
+    variations = db.relationship("Variation", backref="rap_item", lazy=True)
 
     # ── Angka turunan (on-query, tidak disimpan) ──
     @property
@@ -546,6 +547,15 @@ class RapItem(db.Model):
                 total += p.amount
         return total
 
+    @property
+    def value_internal(self):
+        """Value internal: tersertifikasi + klaim variation (disetujui/diajukan, bukan anticipated)."""
+        total = self.tersertifikasi
+        for v in self.variations:
+            if v.status_entitlement in ("disetujui", "diajukan") and v.nilai_klaim_value:
+                total += v.nilai_klaim_value
+        return total
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -570,6 +580,7 @@ class RapItem(db.Model):
             "flexed_budget": self.flexed_budget,
             "tersertifikasi": self.tersertifikasi,
             "terbayar": self.terbayar,
+            "value_internal": self.value_internal,
         }
 
 
@@ -776,4 +787,120 @@ class Variation(db.Model):
             "status_entitlement": self.status_entitlement,
             "cco_ref": self.cco_ref,
             "catatan": self.catatan,
+        }
+
+
+class Accrual(db.Model):
+    """Estimasi biaya yang belum tersertifikasi — opname lapangan jujur lebih baik dari nol."""
+    __tablename__ = "accruals"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_accruals_project_id"), nullable=False)
+    rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_accruals_rap_item_id"), nullable=True)
+    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id", name="fk_accruals_spk_id"), nullable=True)
+    periode = db.Column(db.String(10), default="")     # "2026-07"
+    nilai_estimasi = db.Column(db.Float, default=0.0)
+    dasar = db.Column(db.String(500), default="")
+    dibuat_oleh = db.Column(db.String(50), default="")
+    tanggal = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "rap_item_id": self.rap_item_id,
+            "spk_id": self.spk_id,
+            "periode": self.periode,
+            "nilai_estimasi": self.nilai_estimasi,
+            "dasar": self.dasar,
+            "dibuat_oleh": self.dibuat_oleh,
+            "tanggal": self.tanggal.isoformat() if self.tanggal else None,
+        }
+
+
+class CvrPeriod(db.Model):
+    """Periode CVR — draft bisa diedit, final terkunci (snapshot)."""
+    __tablename__ = "cvr_periods"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_cvr_periods_project_id"), nullable=False)
+    periode = db.Column(db.String(10), default="")     # "2026-06"
+    cutoff_date = db.Column(db.Date, nullable=True)
+    status = db.Column(db.String(10), default="draft")  # draft|final
+    disusun_oleh = db.Column(db.String(100), default="")
+    tanggal_final = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    lines = db.relationship("CvrLine", backref="period",
+                            cascade="all, delete-orphan", lazy=True)
+    commentaries = db.relationship("CvrCommentary", backref="period",
+                                   cascade="all, delete-orphan", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "periode": self.periode,
+            "cutoff_date": self.cutoff_date.isoformat() if self.cutoff_date else None,
+            "status": self.status,
+            "disusun_oleh": self.disusun_oleh,
+            "tanggal_final": self.tanggal_final.isoformat() if self.tanggal_final else None,
+        }
+
+
+class CvrLine(db.Model):
+    """Baris CVR per rap_item — di-snapshot saat final, TIDAK dihitung ulang."""
+    __tablename__ = "cvr_lines"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cvr_period_id = db.Column(db.Integer, db.ForeignKey("cvr_periods.id", name="fk_cvr_lines_cvr_period_id"), nullable=False)
+    rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_cvr_lines_rap_item_id"), nullable=True)
+    value_certified = db.Column(db.Float, default=0.0)
+    value_internal = db.Column(db.Float, default=0.0)
+    cost_actual = db.Column(db.Float, default=0.0)
+    cost_accrual = db.Column(db.Float, default=0.0)
+    cost_committed_outstanding = db.Column(db.Float, default=0.0)
+    forecast_cost_to_complete = db.Column(db.Float, default=0.0)   # manual — judgment manusia
+    metode_ctc = db.Column(db.String(30), default="")               # sisa_lingkup|ekstrapolasi|bottom_up
+    forecast_final_cost = db.Column(db.Float, default=0.0)
+    forecast_final_value = db.Column(db.Float, default=0.0)
+    catatan = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    rap_item = db.relationship("RapItem", foreign_keys=[rap_item_id], lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "cvr_period_id": self.cvr_period_id,
+            "rap_item_id": self.rap_item_id,
+            "value_certified": self.value_certified,
+            "value_internal": self.value_internal,
+            "cost_actual": self.cost_actual,
+            "cost_accrual": self.cost_accrual,
+            "cost_committed_outstanding": self.cost_committed_outstanding,
+            "forecast_cost_to_complete": self.forecast_cost_to_complete,
+            "metode_ctc": self.metode_ctc,
+            "forecast_final_cost": self.forecast_final_cost,
+            "forecast_final_value": self.forecast_final_value,
+            "catatan": self.catatan,
+        }
+
+
+class CvrCommentary(db.Model):
+    """Catatan naratif CVR per periode."""
+    __tablename__ = "cvr_commentaries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cvr_period_id = db.Column(db.Integer, db.ForeignKey("cvr_periods.id", name="fk_cvr_commentaries_cvr_period_id"), nullable=False)
+    teks = db.Column(db.Text, default="")
+    penyusun = db.Column(db.String(50), default="")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "cvr_period_id": self.cvr_period_id,
+            "teks": self.teks,
+            "penyusun": self.penyusun,
         }

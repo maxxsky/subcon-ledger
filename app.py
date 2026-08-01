@@ -16,7 +16,8 @@ from werkzeug.utils import secure_filename
 import config
 from models import (db, Vendor, Project, SPK, Certificate, Payment, AuditLog,
                     BOQItem, RapVersion, RapItem, RiskAllowance, PrelimItem,
-                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation)
+                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation,
+                    Accrual, CvrPeriod, CvrLine, CvrCommentary)
 from parsers.sertifikat import parse_sertifikat
 from werkzeug.security import check_password_hash
 
@@ -1161,6 +1162,215 @@ def procurement_view(project_id):
     prs = ProcurementRequest.query.filter_by(project_id=project_id) \
                                   .order_by(ProcurementRequest.id.desc()).all()
     return render_template("procurement.html", project=project, prs=prs)
+
+
+# ── CVR ─────────────────────────────────────────────────────
+def _cvr_active_items(project_id):
+    """RapItem dari versi RAP aktif utk proyek."""
+    version = _rap_version(project_id)
+    if not version:
+        return []
+    return RapItem.query.filter_by(project_id=project_id,
+                                   rap_version_id=version.id).all()
+
+
+@app.route("/projects/<int:project_id>/cvr")
+@login_required
+def cvr_view(project_id):
+    project = Project.query.get_or_404(project_id)
+    session["project_id"] = project_id
+    periods = CvrPeriod.query.filter_by(project_id=project_id) \
+                             .order_by(CvrPeriod.periode.desc()).all()
+    period_id = request.args.get("period", type=int)
+    period = None
+    if period_id:
+        period = CvrPeriod.query.get(period_id)
+    if not period and periods:
+        period = periods[0]
+    return render_template("cvr.html", project=project, periods=periods, period=period)
+
+
+@app.route("/api/projects/<int:project_id>/cvr", methods=["POST"])
+@admin_required
+def api_cvr_generate(project_id):
+    """Generate draft cvr_lines dari data terkini. Kalau periode final → 400 (read-only)."""
+    data = request.get_json(force=True) or {}
+    periode = data.get("periode", "")
+    cutoff = _parse_date_str(data.get("cutoff_date", ""))
+    if not periode:
+        return jsonify({"error": "periode wajib (format YYYY-MM)"}), 400
+
+    existing = CvrPeriod.query.filter_by(project_id=project_id, periode=periode).first()
+    if existing and existing.status == "final":
+        return jsonify({"error": "periode sudah final — read-only, tidak bisa generate ulang"}), 400
+    if existing:
+        # hapus draft lama, regenerate
+        for l in existing.lines:
+            db.session.delete(l)
+        for c in existing.commentaries:
+            db.session.delete(c)
+        period = existing
+    else:
+        period = CvrPeriod(project_id=project_id, periode=periode, status="draft",
+                           cutoff_date=cutoff, disusun_oleh=current_user())
+        db.session.add(period)
+    db.session.flush()
+
+    items = _cvr_active_items(project_id)
+    for it in items:
+        # cost_accrual periode berjalan
+        accrual_sum = db.session.query(db.func.coalesce(db.func.sum(Accrual.nilai_estimasi), 0)) \
+            .filter(Accrual.rap_item_id == it.id, Accrual.periode == periode).scalar()
+        committed = max(it.terikat - it.terbayar, 0.0)
+        line = CvrLine(
+            cvr_period_id=period.id,
+            rap_item_id=it.id,
+            value_certified=it.tersertifikasi,
+            value_internal=it.value_internal,
+            cost_actual=it.terbayar,
+            cost_accrual=float(accrual_sum or 0),
+            cost_committed_outstanding=committed,
+            forecast_cost_to_complete=0,   # manual — judgment manusia
+            metode_ctc="",                  # manual
+            forecast_final_cost=it.terbayar + float(accrual_sum or 0),  # + CTC (0 utk draft baru)
+            forecast_final_value=it.value_internal + max(it.terikat - it.value_internal, 0),
+        )
+        db.session.add(line)
+    audit("generate_cvr", "cvr_period", period.id, f"periode={periode}, draft")
+    db.session.commit()
+    return jsonify({"period": period.to_dict(),
+                    "lines": [l.to_dict() for l in period.lines]}), 201
+
+
+@app.route("/api/cvr/<int:period_id>", methods=["PATCH"])
+@admin_required
+def api_cvr_update(period_id):
+    period = CvrPeriod.query.get_or_404(period_id)
+    if period.status == "final":
+        return jsonify({"error": "periode final — read-only, cvr_lines di-snapshot"}), 400
+    data = request.get_json(force=True) or {}
+    # Edit field manual pada line tertentu
+    line_id = data.get("line_id")
+    line = CvrLine.query.get(line_id)
+    if not line or line.cvr_period_id != period.id:
+        return jsonify({"error": "line tidak valid"}), 400
+    if "forecast_cost_to_complete" in data:
+        line.forecast_cost_to_complete = float(data["forecast_cost_to_complete"] or 0)
+    if "metode_ctc" in data:
+        line.metode_ctc = data["metode_ctc"]
+    if "catatan" in data:
+        line.catatan = data["catatan"]
+    if "forecast_final_value" in data:
+        line.forecast_final_value = float(data["forecast_final_value"] or 0)
+    # hitung ulang forecast final cost
+    line.forecast_final_cost = (line.cost_actual + line.cost_accrual
+                                + line.forecast_cost_to_complete)
+    # Commentary kalau dikirim
+    if "commentary" in data and (data.get("commentary") or "").strip():
+        db.session.add(CvrCommentary(cvr_period_id=period.id,
+                                     teks=data["commentary"].strip(),
+                                     penyusun=current_user()))
+    audit("update_cvr", "cvr_line", line.id, f"periode={period.periode}")
+    db.session.commit()
+    return jsonify(line.to_dict())
+
+
+@app.route("/api/cvr/<int:period_id>/finalize", methods=["POST"])
+@admin_required
+def api_cvr_finalize(period_id):
+    period = CvrPeriod.query.get_or_404(period_id)
+    if period.status == "final":
+        return jsonify({"error": "sudah final"}), 400
+    period.status = "final"
+    period.tanggal_final = date.today()
+    audit("finalize_cvr", "cvr_period", period.id,
+          f"periode={period.periode} — snapshot terkunci")
+    db.session.commit()
+    return jsonify(period.to_dict())
+
+
+@app.route("/api/projects/<int:project_id>/cvr/variance")
+@login_required
+def api_cvr_variance(project_id):
+    """Variance forecast periode lama (final) vs terbaru, per rap_item."""
+    periods = CvrPeriod.query.filter_by(project_id=project_id) \
+                             .order_by(CvrPeriod.periode.asc()).all()
+    by_period = {}
+    for p in periods:
+        for l in p.lines:
+            if l.rap_item_id not in by_period:
+                by_period[l.rap_item_id] = []
+            by_period[l.rap_item_id].append({
+                "period": p.periode, "status": p.status,
+                "forecast_final_cost": l.forecast_final_cost,
+                "forecast_final_value": l.forecast_final_value,
+            })
+    out = []
+    for rap_item_id, entries in by_period.items():
+        entries.sort(key=lambda e: e["period"])
+        prev = None
+        for e in entries:
+            if prev is not None:
+                out.append({
+                    "rap_item_id": rap_item_id,
+                    "prev_period": prev["period"],
+                    "curr_period": e["period"],
+                    "prev_cost": prev["forecast_final_cost"],
+                    "curr_cost": e["forecast_final_cost"],
+                    "cost_delta": e["forecast_final_cost"] - prev["forecast_final_cost"],
+                    "prev_value": prev["forecast_final_value"],
+                    "curr_value": e["forecast_final_value"],
+                    "value_delta": e["forecast_final_value"] - prev["forecast_final_value"],
+                })
+            prev = e
+    return jsonify(out)
+
+
+@app.route("/cvr/<int:period_id>/export")
+@login_required
+def cvr_export(period_id):
+    from exporters.cvr_excel import generate_cvr_excel
+    period = CvrPeriod.query.get_or_404(period_id)
+    project = Project.query.get_or_404(period.project_id)
+    path = generate_cvr_excel(project, period)
+    return send_file(path, as_attachment=True,
+                     download_name=f"CVR_{project.nama[:20]}_{period.periode}.xlsx")
+
+
+# ── ACCRUALS ────────────────────────────────────────────────
+@app.route("/api/accruals", methods=["POST"])
+@admin_required
+def api_accruals():
+    data = request.get_json(force=True) or {}
+    project_id = data.get("project_id")
+    if not project_id:
+        return jsonify({"error": "project_id wajib"}), 400
+    a = Accrual(
+        project_id=project_id,
+        rap_item_id=data.get("rap_item_id") or None,
+        spk_id=data.get("spk_id") or None,
+        periode=data.get("periode", ""),
+        nilai_estimasi=float(data.get("nilai_estimasi", 0) or 0),
+        dasar=data.get("dasar", ""),
+        dibuat_oleh=current_user(),
+        tanggal=_parse_date_str(data.get("tanggal", "")))
+    db.session.add(a)
+    db.session.flush()
+    audit("add_accrual", "accrual", a.id,
+          f"periode={a.periode}, rap_item={a.rap_item_id}, nilai={a.nilai_estimasi}")
+    db.session.commit()
+    return jsonify(a.to_dict()), 201
+
+
+@app.route("/api/projects/<int:project_id>/accruals")
+@login_required
+def api_accruals_list(project_id):
+    periode = request.args.get("periode", "")
+    q = Accrual.query.filter_by(project_id=project_id)
+    if periode:
+        q = q.filter_by(periode=periode)
+    accruals = q.order_by(Accrual.periode.desc(), Accrual.id).all()
+    return jsonify([a.to_dict() for a in accruals])
 
 
 if __name__ == "__main__":

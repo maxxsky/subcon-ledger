@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}CVR — {{ project.nama }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/projects">← Proyek</a>
+    <h1 class="page" style="margin-top:8px">CVR — {{ project.nama }}</h1>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    {% if periods %}
+    <select class="inp" style="width:auto" onchange="if(this.value)location.href='/projects/{{ project.id }}/cvr?period='+this.value">
+      {% for p in periods %}
+      <option value="{{ p.id }}" {% if period and p.id==period.id %}selected{% endif %}>{{ p.periode }} ({{ p.status }})</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    {% if current_role=='admin' %}
+    <input class="inp" type="month" id="newPeriode" style="width:auto">
+    <button class="btn btn-primary" id="btnGenerate">Generate Draft</button>
+    {% endif %}
+    {% if period and period.status=='final' %}<a class="btn btn-ghost" href="/cvr/{{ period.id }}/export">⬇ Export Excel</a>{% endif %}
+  </div>
+</div>
+
+{% if not period %}
+<div class="card"><div class="card-b" style="text-align:center;padding:32px;color:var(--ink-3)">
+  Belum ada periode CVR. {% if current_role=='admin' %}Pilih bulan & klik Generate Draft.{% endif %}
+</div></div>
+{% else %}
+{% set t = namespace(value_certified=0, value_internal=0, cost_actual=0,
+                     cost_accrual=0, committed=0, fc_cost=0, fc_value=0) %}
+<div class="card">
+  <div class="card-h">
+    <div class="t">CVR {{ period.periode }} — {{ period.status|upper }}
+      {% if period.status=='final' %}<span class="chip chip-paid">🔒 snapshot</span>{% else %}<span class="chip chip-accent">draft — bisa diedit</span>{% endif %}
+    </div>
+    {% if current_role=='admin' and period.status=='draft' %}
+    <button class="btn btn-primary" id="btnFinalize" data-id="{{ period.id }}">Finalize & Kunci</button>
+    {% endif %}
+  </div>
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap">
+      <thead><tr>
+        <th>Kode</th><th style="min-width:180px">Uraian</th>
+        <th class="r">Value Cert.</th><th class="r">Value Int.</th>
+        <th class="r">Cost Actual</th><th class="r">Accrual</th><th class="r">Committed</th>
+        <th class="r">CTC</th><th>Metode</th><th class="r">FC Cost</th><th class="r">FC Value</th>
+      </tr></thead>
+      <tbody>
+        {% for l in period.lines %}
+        {% set it = l.rap_item %}
+        {% set margin = l.value_internal - l.forecast_final_cost %}
+        {% set t.value_certified = t.value_certified + l.value_certified %}
+        {% set t.value_internal = t.value_internal + l.value_internal %}
+        {% set t.cost_actual = t.cost_actual + l.cost_actual %}
+        {% set t.cost_accrual = t.cost_accrual + l.cost_accrual %}
+        {% set t.committed = t.committed + l.cost_committed_outstanding %}
+        {% set t.fc_cost = t.fc_cost + l.forecast_final_cost %}
+        {% set t.fc_value = t.fc_value + l.forecast_final_value %}
+        <tr style="font-size:12px">
+          <td class="num" style="font-weight:600">{{ it.kode_rap if it else '—' }}</td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">{{ it.uraian_baku if it else '—' }}</td>
+          <td class="r num">{{ l.value_certified|money }}</td>
+          <td class="r num">{{ l.value_internal|money }}</td>
+          <td class="r num">{{ l.cost_actual|money }}</td>
+          <td class="r num">{{ l.cost_accrual|money }}</td>
+          <td class="r num">{{ l.cost_committed_outstanding|money }}</td>
+          <td class="r num">{{ l.forecast_cost_to_complete|money }}</td>
+          <td><span class="chip chip-mute" style="font-size:9px">{{ l.metode_ctc or '—' }}</span></td>
+          <td class="r num" style="font-weight:600">{{ l.forecast_final_cost|money }}</td>
+          <td class="r num" style="font-weight:600">{{ l.forecast_final_value|money }}</td>
+        </tr>
+        <tr class="subrow show" id="cvr{{ l.id }}" style="font-size:11px">
+          <td colspan="11" style="padding:2px 12px 8px">
+            {% if period.status=='draft' and current_role=='admin' %}
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="inp ctc" data-id="{{ l.id }}" type="number" step="any"
+                     placeholder="CTC (manual)" value="{{ l.forecast_cost_to_complete or '' }}" style="width:130px;padding:4px 8px">
+              <select class="inp metode" data-id="{{ l.id }}" style="width:auto;padding:4px 8px">
+                <option value="">metode CTC</option>
+                <option value="sisa_lingkup" {{ 'selected' if l.metode_ctc=='sisa_lingkup' }}>sisa lingkup</option>
+                <option value="ekstrapolasi" {{ 'selected' if l.metode_ctc=='ekstrapolasi' }}>ekstrapolasi</option>
+                <option value="bottom_up" {{ 'selected' if l.metode_ctc=='bottom_up' }}>bottom-up</option>
+              </select>
+              <input class="inp catatan" data-id="{{ l.id }}" placeholder="Catatan" value="{{ l.catatan }}" style="flex:1;min-width:160px;padding:4px 8px">
+              <button class="btn btn-sm btn-ghost save-line" data-id="{{ l.id }}">Simpan</button>
+            </div>
+            {% else %}
+            <div style="color:var(--ink-3)">
+              {% if l.metode_ctc %}CTC {{ l.forecast_cost_to_complete|money }} ({{ l.metode_ctc }}){% endif %}
+              {% if l.catatan %} · {{ l.catatan }}{% endif %}
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada baris CVR.</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="2">TOTAL</td>
+        <td class="r num">{{ t.value_certified|money }}</td>
+        <td class="r num">{{ t.value_internal|money }}</td>
+        <td class="r num">{{ t.cost_actual|money }}</td>
+        <td class="r num">{{ t.cost_accrual|money }}</td>
+        <td class="r num">{{ t.committed|money }}</td>
+        <td></td><td></td>
+        <td class="r num" style="font-weight:700">{{ t.fc_cost|money }}</td>
+        <td class="r num" style="font-weight:700">{{ t.fc_value|money }}</td>
+      </tr></tfoot>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="card-h"><div class="t">Variance Forecast (periode lama vs baru)</div></div>
+  <div class="card-b">
+    <div id="varianceBox" style="display:grid;gap:6px;font-size:12px">
+      <div style="color:var(--ink-3)">Memuat…</div>
+    </div>
+  </div>
+</div>
+
+{% if period.commentaries %}
+<div class="card" style="margin-top:12px">
+  <div class="card-h"><div class="t">Catatan CVR</div></div>
+  <div class="card-b" style="padding:12px 16px">
+    {% for c in period.commentaries %}
+    <div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)">
+      <span style="color:var(--gold, #d9a514);font-weight:600">{{ c.penyusun }}:</span> {{ c.teks }}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const projectId = {{ project.id }};
+const periodStatus = {{ ('\"' ~ period.status ~ '\"') if period else '\"none\"' }};
+
+document.getElementById('btnGenerate')?.addEventListener('click', async () => {
+  const periode = document.getElementById('newPeriode').value;
+  if (!periode) { alert('Pilih bulan dulu'); return; }
+  const res = await fetch(`/api/projects/${projectId}/cvr`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({periode, cutoff_date: periode + '-28'})
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+});
+
+document.getElementById('btnFinalize')?.addEventListener('click', async () => {
+  if (!confirm('Finalize periode ini? cvr_lines akan di-snapshot dan read-only selamanya.')) return;
+  const res = await fetch(`/api/cvr/${document.getElementById('btnFinalize').dataset.id}/finalize`, {method: 'POST'});
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+});
+
+document.querySelectorAll('.save-line').forEach(btn => btn.addEventListener('click', async () => {
+  const id = btn.dataset.id;
+  const ctc = document.querySelector(`.ctc[data-id="${id}"]`).value;
+  const metode = document.querySelector(`.metode[data-id="${id}"]`).value;
+  const catatan = document.querySelector(`.catatan[data-id="${id}"]`).value;
+  const periodId = new URLSearchParams(location.search).get('period');
+  const res = await fetch(`/api/cvr/${periodId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({line_id: parseInt(id), forecast_cost_to_complete: parseFloat(ctc) || 0, metode_ctc: metode, catatan})
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+}));
+
+// Variance
+(async () => {
+  const box = document.getElementById('varianceBox');
+  if (!box) return;
+  const res = await fetch(`/api/projects/${projectId}/cvr/variance`);
+  const rows = await res.json();
+  if (!rows.length) { box.innerHTML = '<div style="color:var(--ink-3)">Belum ada 2+ periode utk dibandingkan.</div>'; return; }
+  box.innerHTML = rows.map(r => {
+    const dCost = r.cost_delta;
+    const color = dCost > 0 ? 'var(--alert)' : dCost < 0 ? 'var(--paid)' : 'var(--ink-3)';
+    return `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0">
+      <span>RAP #${r.rap_item_id} · <b>${r.prev_period}</b> → <b>${r.curr_period}</b></span>
+      <span>FC cost: <b>${(r.prev_cost/1e6).toFixed(1)}jt</b> → <b>${(r.curr_cost/1e6).toFixed(1)}jt</b>
+        <span style="color:${color};font-weight:700">(${dCost > 0 ? '+' : ''}${(dCost/1e6).toFixed(1)}jt)</span></span>
+    </div>`;
+  }).join('');
+})();
+</script>
+{% endblock %}

@@ -214,6 +214,7 @@ footer{max-width:1180px; margin:0 auto; padding:18px 22px;
       <a href="/projects/{{ active_project.id }}/rap" class="{% if request.endpoint=='rap_view' %}active{% endif %}">RAP</a>
       <a href="/projects/{{ active_project.id }}/procurement" class="{% if request.endpoint=='procurement_view' %}active{% endif %}">Pengadaan</a>
       <a href="/projects/{{ active_project.id }}/variations" class="{% if request.endpoint=='variations_view' %}active{% endif %}">Variation</a>
+      <a href="/projects/{{ active_project.id }}/cvr" class="{% if request.endpoint=='cvr_view' %}active{% endif %}">CVR</a>
       {% endif %}
       {% if current_role=='admin' %}
       <a href="/upload" class="{% if request.endpoint in ['upload','upload_preview'] %}active{% endif %}">Upload Sertifikat</a>
