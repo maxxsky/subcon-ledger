@@ -9,7 +9,8 @@ data/
 *.db
 uploads/
 backups/
-exports/
+# Hanya file output export yang di-ignore, bukan direktori sumber exporters/
+exports/*.xlsx
 
 # ── Secrets — config lokal dengan password asli TIDAK boleh masuk repo ──
 config.py

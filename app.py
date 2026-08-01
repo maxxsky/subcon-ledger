@@ -630,7 +630,7 @@ def audit_log():
 @app.route("/export")
 @login_required
 def export_excel():
-    from exports.excel import generate_excel
+    from exporters.excel import generate_excel
     output_dir = os.path.join(config.BASE_DIR, "exports")
     os.makedirs(output_dir, exist_ok=True)
     path = generate_excel(output_dir)
