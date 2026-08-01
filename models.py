@@ -143,12 +143,12 @@ class SPK(db.Model):
     __tablename__ = "spks"
 
     id = db.Column(db.Integer, primary_key=True)
-    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False)
-    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id", name="fk_spks_vendor_id"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_spks_project_id"), nullable=False)
     # Kolom FK fase berikutnya — int nullable sekarang, constraint ditambah saat tabel tujuan ada
-    rap_item_id = db.Column(db.Integer, nullable=True)            # FK Fase 2
+    rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_spks_rap_item_id"), nullable=True)            # FK Fase 2
     procurement_request_id = db.Column(db.Integer, nullable=True)  # FK Fase 3
-    prelim_item_id = db.Column(db.Integer, nullable=True)          # FK Fase 2
+    prelim_item_id = db.Column(db.Integer, db.ForeignKey("prelim_items.id", name="fk_spks_prelim_item_id"), nullable=True)      # FK Fase 2
     variation_id = db.Column(db.Integer, nullable=True)            # FK Fase 3
     jenis = db.Column(db.String(10), default="SPK")                # "SPK" | "PO"
     tanggal_terbit = db.Column(db.Date, nullable=True)
@@ -313,7 +313,7 @@ class Certificate(db.Model):
     __tablename__ = "certificates"
 
     id = db.Column(db.Integer, primary_key=True)
-    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id"), nullable=False)
+    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id", name="fk_certificates_spk_id"), nullable=False)
     nomor = db.Column(db.String(100), default="")          # was: payment_number
     periode = db.Column(db.String(10), nullable=True)      # "2026-08"
     tanggal = db.Column(db.Date, nullable=True)
@@ -347,8 +347,8 @@ class Payment(db.Model):
     __tablename__ = "payments"
 
     id = db.Column(db.Integer, primary_key=True)
-    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id"), nullable=False)
-    certificate_id = db.Column(db.Integer, db.ForeignKey("certificates.id"), nullable=True)
+    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id", name="fk_payments_spk_id"), nullable=False)
+    certificate_id = db.Column(db.Integer, db.ForeignKey("certificates.id", name="fk_payments_certificate_id"), nullable=True)
     amount = db.Column(db.Float, nullable=False)
     date = db.Column(db.Date, nullable=True)   # was String(20) — B2
     is_dp = db.Column(db.Boolean, default=False)
@@ -388,4 +388,230 @@ class AuditLog(db.Model):
             "entity_id": self.entity_id,
             "detail": self.detail,
             "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+
+class BOQItem(db.Model):
+    """Bill of Quantity — baseline penawaran, sumber harga satuan jual."""
+    __tablename__ = "boq_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_boq_items_project_id"), nullable=False)
+    kode = db.Column(db.String(50), default="")
+    uraian = db.Column(db.String(300), default="")
+    satuan = db.Column(db.String(20), default="")
+    volume = db.Column(db.Float, default=0.0)
+    harga_satuan_jual = db.Column(db.Float, default=0.0)
+    total_jual = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    rap_items = db.relationship("RapItem", backref="boq_item", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "kode": self.kode,
+            "uraian": self.uraian,
+            "satuan": self.satuan,
+            "volume": self.volume,
+            "harga_satuan_jual": self.harga_satuan_jual,
+            "total_jual": self.total_jual,
+        }
+
+
+class RapVersion(db.Model):
+    """Versi RAP — baseline dibekukan, revisi = versi baru bukan overwrite."""
+    __tablename__ = "rap_versions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_rap_versions_project_id"), nullable=False)
+    versi = db.Column(db.String(20), default="v1")
+    tanggal = db.Column(db.Date, nullable=True)
+    status = db.Column(db.String(20), default="draft")   # draft|aktif|superseded
+    disusun_oleh = db.Column(db.String(100), default="")
+    catatan_revisi = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    items = db.relationship("RapItem", backref="version",
+                            cascade="all, delete-orphan", lazy=True)
+    risk_allowances = db.relationship("RiskAllowance", backref="version",
+                                      cascade="all, delete-orphan", lazy=True)
+    prelim_items = db.relationship("PrelimItem", backref="version",
+                                   cascade="all, delete-orphan", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "versi": self.versi,
+            "tanggal": self.tanggal.isoformat() if self.tanggal else None,
+            "status": self.status,
+            "disusun_oleh": self.disusun_oleh,
+            "catatan_revisi": self.catatan_revisi,
+        }
+
+
+class RapItem(db.Model):
+    """Satu baris RAP = satu keputusan pengadaan."""
+    __tablename__ = "rap_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_rap_items_project_id"), nullable=False)
+    rap_version_id = db.Column(db.Integer, db.ForeignKey("rap_versions.id", name="fk_rap_items_rap_version_id"), nullable=False)
+    kode_rap = db.Column(db.String(50), default="")
+    boq_item_id = db.Column(db.Integer, db.ForeignKey("boq_items.id", name="fk_rap_items_boq_item_id"), nullable=True)
+    uraian_baku = db.Column(db.String(300), default="")
+    jenis_biaya = db.Column(db.String(20), default="material")  # material|upah|alat|subkon|overhead
+    satuan = db.Column(db.String(20), default="")
+    vol_boq = db.Column(db.Float, default=0.0)
+    faktor = db.Column(db.Float, default=1.0)      # waste/overlap eksplisit
+    vol_rap = db.Column(db.Float, default=0.0)     # = vol_boq × faktor
+    hsat_rap = db.Column(db.Float, default=0.0)
+    total_rap = db.Column(db.Float, default=0.0)
+    sumber_harga = db.Column(db.String(20), default="penawaran")  # penawaran|historis|asumsi
+    is_consumable = db.Column(db.Boolean, default=False)
+    catatan = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spks = db.relationship("SPK", backref="rap_item", lazy=True)
+
+    # ── Angka turunan (on-query, tidak disimpan) ──
+    @property
+    def terikat(self):
+        """Σ spk.final_contract untuk SPK aktif (status != dibatalkan) yang nunjuk item ini."""
+        total = 0.0
+        for spk in self.spks:
+            if spk.status != "dibatalkan":
+                total += spk.final_contract
+        return total
+
+    @property
+    def sisa_budget(self):
+        return self.total_rap - self.terikat
+
+    @property
+    def buying_gain(self):
+        # Sama rumus dengan sisa_budget, beda makna — tampil terpisah
+        return self.total_rap - self.terikat
+
+    @property
+    def vol_aktual(self):
+        # Fase ini belum ada tracking vol aktual — default = vol_rap.
+        # Fase berikutnya (sertifikat) mengisi nilai sebenarnya.
+        return self.vol_rap
+
+    @property
+    def flexed_budget(self):
+        return self.hsat_rap * self.vol_aktual
+
+    @property
+    def tersertifikasi(self):
+        """Σ certificate.nilai_tersertifikasi via SPK yang rap_item_id-nya cocok."""
+        total = 0.0
+        for spk in self.spks:
+            for cert in spk.certificates:
+                total += cert.nilai_tersertifikasi or 0.0
+        return total
+
+    @property
+    def terbayar(self):
+        """Σ payment.amount via SPK yang sama."""
+        total = 0.0
+        for spk in self.spks:
+            for p in spk.payments:
+                total += p.amount
+        return total
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "rap_version_id": self.rap_version_id,
+            "kode_rap": self.kode_rap,
+            "boq_item_id": self.boq_item_id,
+            "uraian_baku": self.uraian_baku,
+            "jenis_biaya": self.jenis_biaya,
+            "satuan": self.satuan,
+            "vol_boq": self.vol_boq,
+            "faktor": self.faktor,
+            "vol_rap": self.vol_rap,
+            "hsat_rap": self.hsat_rap,
+            "total_rap": self.total_rap,
+            "sumber_harga": self.sumber_harga,
+            "is_consumable": self.is_consumable,
+            "catatan": self.catatan,
+            "terikat": self.terikat,
+            "sisa_budget": self.sisa_budget,
+            "buying_gain": self.buying_gain,
+            "flexed_budget": self.flexed_budget,
+            "tersertifikasi": self.tersertifikasi,
+            "terbayar": self.terbayar,
+        }
+
+
+class RiskAllowance(db.Model):
+    """Cadangan risiko RAP — aktif | terpakai | dilepas."""
+    __tablename__ = "risk_allowances"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_risk_allowances_project_id"), nullable=False)
+    rap_version_id = db.Column(db.Integer, db.ForeignKey("rap_versions.id", name="fk_risk_allowances_rap_version_id"), nullable=False)
+    nama = db.Column(db.String(200), default="")
+    nilai = db.Column(db.Float, default=0.0)
+    pemicu = db.Column(db.String(300), default="")
+    status = db.Column(db.String(20), default="aktif")   # aktif|terpakai|dilepas
+    nilai_terpakai = db.Column(db.Float, default=0.0)
+    tanggal_perubahan = db.Column(db.Date, nullable=True)
+    catatan = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "rap_version_id": self.rap_version_id,
+            "nama": self.nama,
+            "nilai": self.nilai,
+            "pemicu": self.pemicu,
+            "status": self.status,
+            "nilai_terpakai": self.nilai_terpakai,
+            "tanggal_perubahan": self.tanggal_perubahan.isoformat() if self.tanggal_perubahan else None,
+            "catatan": self.catatan,
+        }
+
+
+class PrelimItem(db.Model):
+    """Item preliminaries — biaya per bulan × durasi."""
+    __tablename__ = "prelim_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_prelim_items_project_id"), nullable=False)
+    rap_version_id = db.Column(db.Integer, db.ForeignKey("rap_versions.id", name="fk_prelim_items_rap_version_id"), nullable=False)
+    uraian = db.Column(db.String(300), default="")
+    biaya_per_bulan = db.Column(db.Float, default=0.0)
+    durasi_rencana_bulan = db.Column(db.Integer, default=0)
+    total = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spks = db.relationship("SPK", backref="prelim_item", lazy=True)
+
+    @property
+    def terikat(self):
+        total = 0.0
+        for spk in self.spks:
+            if spk.status != "dibatalkan":
+                total += spk.final_contract
+        return total
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "rap_version_id": self.rap_version_id,
+            "uraian": self.uraian,
+            "biaya_per_bulan": self.biaya_per_bulan,
+            "durasi_rencana_bulan": self.durasi_rencana_bulan,
+            "total": self.total,
+            "terikat": self.terikat,
         }

@@ -14,7 +14,8 @@ from flask import (Flask, render_template, request, redirect, url_for,
 from werkzeug.utils import secure_filename
 
 import config
-from models import db, Vendor, Project, SPK, Certificate, Payment, AuditLog
+from models import (db, Vendor, Project, SPK, Certificate, Payment, AuditLog,
+                    BOQItem, RapVersion, RapItem, RiskAllowance, PrelimItem)
 from parsers.sertifikat import parse_sertifikat
 from werkzeug.security import check_password_hash
 
@@ -83,6 +84,16 @@ def _default_project():
     return p
 
 
+def _active_project():
+    """Proyek aktif dari session, fallback ke proyek pertama."""
+    pid = session.get("project_id")
+    if pid:
+        p = Project.query.get(pid)
+        if p:
+            return p
+    return _default_project()
+
+
 def _parse_date_str(s):
     """Parse string tanggal YYYY-MM-DD → date object, None kalau invalid."""
     if not s:
@@ -110,7 +121,15 @@ def inject_globals():
     user = session.get("user", "")
     role = config.USERS.get(user, {}).get("role", "viewer")
     name = config.USERS.get(user, {}).get("name", "")
+    projects = Project.query.order_by(Project.nama).all()
+    active_project = None
+    pid = session.get("project_id")
+    if pid:
+        active_project = Project.query.get(pid)
+    if not active_project and projects:
+        active_project = projects[0]
     return {"current_user": user, "current_role": role, "current_name": name,
+            "projects": projects, "active_project": active_project,
             "now": datetime.now()}
 
 
@@ -727,6 +746,220 @@ def delete_payment(payment_id):
     if spk:
         return redirect(url_for("subcon_detail", subcon_id=spk.vendor_id))
     return redirect(url_for("dashboard"))
+
+
+# ── PROJECTS ─────────────────────────────────────────────────
+@app.route("/projects", methods=["GET", "POST"])
+@login_required
+def projects():
+    if request.method == "POST":
+        if current_user() and config.USERS.get(current_user(), {}).get("role") != "admin":
+            flash("Akses ditolak.", "danger")
+            return redirect(url_for("projects"))
+        nama = request.form.get("nama", "").strip()
+        if not nama:
+            flash("Nama proyek tidak boleh kosong.", "danger")
+            return redirect(url_for("projects"))
+        lokasi = request.form.get("lokasi", "").strip()
+        nilai_kontrak = float(request.form.get("nilai_kontrak", 0) or 0)
+        margin = request.form.get("margin_tender_pct", "").strip()
+        p = Project(nama=nama, lokasi=lokasi, nilai_kontrak=nilai_kontrak,
+                    margin_tender_pct=float(margin) if margin else None,
+                    tanggal_mulai=_parse_date_str(request.form.get("tanggal_mulai", "")),
+                    durasi_rencana_bulan=int(request.form.get("durasi_rencana_bulan", 0) or 0),
+                    status=request.form.get("status", "aktif"))
+        db.session.add(p)
+        db.session.flush()
+        audit("add_project", "project", p.id, f"nama={nama}")
+        db.session.commit()
+        session["project_id"] = p.id
+        flash(f"Proyek '{nama}' dibuat dan diaktifkan.", "success")
+        return redirect(url_for("rap_view", project_id=p.id))
+    return render_template("projects.html")
+
+
+@app.route("/projects/<int:project_id>/switch")
+@login_required
+def project_switch(project_id):
+    p = Project.query.get_or_404(project_id)
+    session["project_id"] = p.id
+    flash(f"Proyek aktif: {p.nama}", "info")
+    nxt = request.args.get("next", "")
+    return redirect(nxt or url_for("dashboard"))
+
+
+# ── RAP VIEW ─────────────────────────────────────────────────
+def _rap_version(project_id, version_id=None):
+    """Versi RAP aktif utk proyek — pilih by id, fallback status aktif, lalu draft terbaru."""
+    if version_id:
+        v = RapVersion.query.filter_by(id=version_id, project_id=project_id).first()
+        if v:
+            return v
+    v = RapVersion.query.filter_by(project_id=project_id, status="aktif") \
+                        .order_by(RapVersion.id.desc()).first()
+    if v:
+        return v
+    return RapVersion.query.filter_by(project_id=project_id) \
+                           .order_by(RapVersion.id.desc()).first()
+
+
+@app.route("/projects/<int:project_id>/rap")
+@login_required
+def rap_view(project_id):
+    project = Project.query.get_or_404(project_id)
+    session["project_id"] = project_id
+    version_id = request.args.get("version", type=int)
+    version = _rap_version(project_id, version_id)
+    versions = RapVersion.query.filter_by(project_id=project_id) \
+                               .order_by(RapVersion.id.desc()).all()
+    items = []
+    prelim_items = []
+    risk_items = []
+    boq_items = BOQItem.query.filter_by(project_id=project_id) \
+                              .order_by(BOQItem.kode).all()
+    if version:
+        items = RapItem.query.filter_by(project_id=project_id, rap_version_id=version.id) \
+                             .order_by(RapItem.kode_rap).all()
+        prelim_items = PrelimItem.query.filter_by(project_id=project_id, rap_version_id=version.id) \
+                                       .order_by(PrelimItem.id).all()
+        risk_items = RiskAllowance.query.filter_by(project_id=project_id, rap_version_id=version.id) \
+                                        .order_by(RiskAllowance.id).all()
+    return render_template("rap_view.html", project=project, version=version,
+                           versions=versions, items=items, prelim_items=prelim_items,
+                           risk_items=risk_items, boq_items=boq_items)
+
+
+# ── API: versi RAP ────────────────────────────────────────────
+@app.route("/api/projects/<int:project_id>/rap/versions", methods=["POST"])
+@admin_required
+def api_rap_versions(project_id):
+    project = Project.query.get_or_404(project_id)
+    data = request.get_json(force=True) or {}
+    # Supersede versi aktif
+    for v in RapVersion.query.filter_by(project_id=project_id, status="aktif").all():
+        v.status = "superseded"
+    latest = RapVersion.query.filter_by(project_id=project_id) \
+                             .order_by(RapVersion.id.desc()).first()
+    next_no = (latest.versi if latest and latest.versi.startswith("v") else "v0")
+    try:
+        next_versi = "v" + str(int(next_no[1:]) + 1)
+    except ValueError:
+        next_versi = "v1"
+    v = RapVersion(project_id=project_id, versi=next_versi, status="aktif",
+                   tanggal=_parse_date_str(data.get("tanggal", "")),
+                   disusun_oleh=data.get("disusun_oleh", ""),
+                   catatan_revisi=data.get("catatan_revisi", ""))
+    db.session.add(v)
+    db.session.flush()
+    audit("add_rap_version", "rap_version", v.id,
+          f"project={project.nama}, versi={next_versi}")
+    db.session.commit()
+    return jsonify(v.to_dict()), 201
+
+
+# ── API: rap items CRUD ───────────────────────────────────────
+@app.route("/api/rap-items", methods=["POST"])
+@admin_required
+def api_rap_items():
+    data = request.get_json(force=True) or {}
+    project_id = data.get("project_id")
+    version_id = data.get("rap_version_id")
+    if not project_id or not version_id:
+        return jsonify({"error": "project_id & rap_version_id wajib"}), 400
+    version = RapVersion.query.get(version_id)
+    if not version or version.project_id != project_id:
+        return jsonify({"error": "versi RAP tidak valid"}), 400
+
+    vol_boq = float(data.get("vol_boq", 0) or 0)
+    faktor = float(data.get("faktor", 1) or 1)
+    hsat = float(data.get("hsat_rap", 0) or 0)
+    vol_rap = vol_boq * faktor
+    item = RapItem(
+        project_id=project_id, rap_version_id=version_id,
+        kode_rap=data.get("kode_rap", ""),
+        boq_item_id=data.get("boq_item_id") or None,
+        uraian_baku=data.get("uraian_baku", ""),
+        jenis_biaya=data.get("jenis_biaya", "material"),
+        satuan=data.get("satuan", ""),
+        vol_boq=vol_boq, faktor=faktor, vol_rap=vol_rap,
+        hsat_rap=hsat, total_rap=vol_rap * hsat,
+        sumber_harga=data.get("sumber_harga", "penawaran"),
+        is_consumable=bool(data.get("is_consumable", False)),
+        catatan=data.get("catatan", ""))
+    db.session.add(item)
+    db.session.flush()
+    audit("add_rap_item", "rap_item", item.id,
+          f"versi={version.versi}, kode={item.kode_rap}, total={item.total_rap}")
+    db.session.commit()
+    return jsonify(item.to_dict()), 201
+
+
+@app.route("/api/rap-items/<int:item_id>", methods=["PATCH"])
+@admin_required
+def api_rap_items_update(item_id):
+    item = RapItem.query.get_or_404(item_id)
+    data = request.get_json(force=True) or {}
+    for k in ("kode_rap", "uraian_baku", "jenis_biaya", "satuan", "sumber_harga", "catatan"):
+        if k in data:
+            setattr(item, k, data[k])
+    if "is_consumable" in data:
+        item.is_consumable = bool(data["is_consumable"])
+    if "boq_item_id" in data:
+        item.boq_item_id = data["boq_item_id"] or None
+    if "vol_boq" in data:
+        item.vol_boq = float(data["vol_boq"] or 0)
+    if "faktor" in data:
+        item.faktor = float(data["faktor"] or 1)
+    if "hsat_rap" in data:
+        item.hsat_rap = float(data["hsat_rap"] or 0)
+    # vol_rap = vol_boq × faktor — dihitung server, tidak percaya input
+    item.vol_rap = item.vol_boq * item.faktor
+    item.total_rap = item.vol_rap * item.hsat_rap
+    audit("update_rap_item", "rap_item", item.id,
+          f"kode={item.kode_rap}, total={item.total_rap}")
+    db.session.commit()
+    return jsonify(item.to_dict())
+
+
+# ── API: four-column (RAP / Terikat / Tersertifikasi / Terbayar) ──
+@app.route("/api/projects/<int:project_id>/four-column")
+@login_required
+def api_four_column(project_id):
+    version_id = request.args.get("version", type=int)
+    version = _rap_version(project_id, version_id)
+    if not version:
+        return jsonify({"items": [], "version": None, "totals": {}})
+    items = RapItem.query.filter_by(project_id=project_id, rap_version_id=version.id) \
+                         .order_by(RapItem.kode_rap).all()
+    out = []
+    for it in items:
+        d = it.to_dict()
+        d["sisa"] = d["total_rap"] - d["terikat"]
+        out.append(d)
+    totals = {
+        "rap": sum(i["total_rap"] for i in out),
+        "terikat": sum(i["terikat"] for i in out),
+        "tersertifikasi": sum(i["tersertifikasi"] for i in out),
+        "terbayar": sum(i["terbayar"] for i in out),
+        "sisa": sum(i["sisa"] for i in out),
+    }
+    return jsonify({"items": out, "version": version.to_dict(), "totals": totals})
+
+
+# ── EXPORT RAP → Excel ───────────────────────────────────────
+@app.route("/projects/<int:project_id>/rap/export")
+@login_required
+def rap_export(project_id):
+    from exporters.rap_excel import generate_rap_excel
+    project = Project.query.get_or_404(project_id)
+    version_id = request.args.get("version", type=int)
+    version = _rap_version(project_id, version_id)
+    if not version:
+        flash("Belum ada versi RAP untuk diexport.", "warning")
+        return redirect(url_for("rap_view", project_id=project_id))
+    path = generate_rap_excel(project, version)
+    return send_file(path, as_attachment=True,
+                     download_name=f"RAP_{project.nama[:20]}_{version.versi}.xlsx")
 
 
 if __name__ == "__main__":

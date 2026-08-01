@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}RAP — {{ project.nama }} — Subcon Ledger{% endblock %}
+{% block content %}
+{% set normal_items = items|selectattr('is_consumable','equalto',false)|list %}
+{% set consumable_items = items|selectattr('is_consumable','equalto',true)|list %}
+{% set c_rap = consumable_items|sum(attribute='total_rap') %}
+{% set c_terikat = consumable_items|sum(attribute='terikat') %}
+{% set c_tersert = consumable_items|sum(attribute='tersertifikasi') %}
+{% set c_terbayar = consumable_items|sum(attribute='terbayar') %}
+
+<div class="pagehead">
+  <div>
+    <a class="back" href="/projects">← Proyek</a>
+    <h1 class="page" style="margin-top:8px">RAP — {{ project.nama }}</h1>
+    <div class="num" style="font-size:12px;color:var(--ink-3);margin-top:4px">
+      {% if version %}Versi <b>{{ version.versi }}</b> · {{ version.status }} · {{ version.catatan_revisi or '' }}{% else %}Belum ada versi RAP{% endif %}
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    {% if versions %}
+    <select class="inp" style="width:auto" onchange="if(this.value)location.href='/projects/{{ project.id }}/rap?version='+this.value">
+      {% for v in versions %}
+      <option value="{{ v.id }}" {% if version and v.id==version.id %}selected{% endif %}>{{ v.versi }} ({{ v.status }})</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    {% if version %}<a class="btn btn-ghost" href="/projects/{{ project.id }}/rap/export?version={{ version.id }}">⬇ Export Excel</a>{% endif %}
+    {% if current_role=='admin' %}
+    <button class="btn btn-primary" id="btnNewVersion" {% if not version %}disabled{% endif %}>+ Versi Baru</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if current_role=='admin' %}
+<div class="card" style="margin-bottom:18px">
+  <div class="card-h"><div class="t">+ Tambah Item RAP</div></div>
+  <div class="card-b">
+    <form id="rapItemForm" style="display:grid;grid-template-columns:80px 1.4fr 110px 70px 90px 70px 110px 90px 60px;gap:8px;align-items:end">
+      <div><label class="fld">Kode</label><input class="inp" name="kode_rap" placeholder="3.1"></div>
+      <div><label class="fld">Uraian baku <span class="req">*</span></label>
+        <input class="inp" name="uraian_baku" list="uraianList" placeholder="Besi Beton Ø12" required>
+        <datalist id="uraianList">{% for b in boq_items %}<option value="{{ b.uraian }}">{% endfor %}</datalist>
+      </div>
+      <div><label class="fld">Jenis biaya</label>
+        <select class="inp" name="jenis_biaya">
+          <option>material</option><option>upah</option><option>alat</option><option>subkon</option><option>overhead</option>
+        </select>
+      </div>
+      <div><label class="fld">Satuan</label><input class="inp" name="satuan" placeholder="m3"></div>
+      <div><label class="fld">Vol BOQ</label><input class="inp num" type="number" step="any" name="vol_boq" value="0"></div>
+      <div><label class="fld">Faktor</label><input class="inp num" type="number" step="0.01" name="faktor" value="1"></div>
+      <div><label class="fld">Harga satuan</label><input class="inp num" type="number" step="any" name="hsat_rap" value="0"></div>
+      <div><label class="fld">Sumber</label>
+        <select class="inp" name="sumber_harga"><option>penawaran</option><option>historis</option><option>asumsi</option></select>
+      </div>
+      <div><label class="fld">&nbsp;</label><button class="btn btn-primary btn-block" type="submit">Simpan</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if not version %}
+<div class="card"><div class="card-b" style="text-align:center;padding:32px;color:var(--ink-3)">
+  Belum ada versi RAP. {% if current_role=='admin' %}Klik <b>+ Versi Baru</b> di atas untuk memulai.{% endif %}
+</div></div>
+{% else %}
+
+{% set t_rap = normal_items|sum(attribute='total_rap') %}
+{% set t_terikat = normal_items|sum(attribute='terikat') %}
+{% set t_tersert = normal_items|sum(attribute='tersertifikasi') %}
+{% set t_terbayar = normal_items|sum(attribute='terbayar') %}
+{% set t_sisa = t_rap - t_terikat %}
+
+<div class="card">
+  <div class="card-h"><div class="t">Empat Kolom — {{ normal_items|length }} item</div>
+    <div class="barkey" style="font-size:11px">
+      <span><i class="paid"></i> Sisa budget = RAP − Terikat</span>
+    </div>
+  </div>
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap">
+      <thead><tr>
+        <th>Kode</th><th style="min-width:220px">Uraian</th>
+        <th class="r">RAP</th><th class="r">Terikat</th><th class="r">Tersertifikasi</th><th class="r">Terbayar</th>
+        <th class="r" style="min-width:120px">Sisa Budget</th>
+      </tr></thead>
+      <tbody>
+        {% for it in normal_items %}
+        <tr style="font-size:12px" class="raprow" data-id="{{ it.id }}">
+          <td class="num" style="font-weight:600">{{ it.kode_rap }}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">
+            {{ it.uraian_baku }}
+            <div style="font-size:10px;color:var(--ink-3)">{{ it.jenis_biaya }} · {{ it.satuan }} · {{ it.vol_rap|round(2) }} × {{ it.hsat_rap|money }} · {{ it.sumber_harga }}</div>
+          </td>
+          <td class="r num">{{ it.total_rap|money }}</td>
+          <td class="r num">{{ it.terikat|money }}</td>
+          <td class="r num" style="color:var(--ink-2)">{{ it.tersertifikasi|money }}</td>
+          <td class="r num" style="color:var(--ink-2)">{{ it.terbayar|money }}</td>
+          <td class="r num" style="font-weight:700;font-size:13px;color:{{ 'var(--alert)' if it.sisa_budget < 0 else 'var(--paid)' }}">
+            {{ it.sisa_budget|money }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada item. Tambahkan item RAP pertama.</td></tr>
+        {% endfor %}
+
+        {% if consumable_items %}
+        <tr style="background:var(--surface-2);font-style:italic">
+          <td class="num">…</td>
+          <td>Bahan habis pakai ({{ consumable_items|length }} item, agregat)</td>
+          <td class="r num">{{ c_rap|money }}</td>
+          <td class="r num">{{ c_terikat|money }}</td>
+          <td class="r num">{{ c_tersert|money }}</td>
+          <td class="r num">{{ c_terbayar|money }}</td>
+          <td class="r num">{{ (c_rap - c_terikat)|money }}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+      {% if normal_items %}
+      <tfoot><tr>
+        <td>TOTAL</td><td></td>
+        <td class="r num">{{ t_rap|money }}</td>
+        <td class="r num">{{ t_terikat|money }}</td>
+        <td class="r num">{{ t_tersert|money }}</td>
+        <td class="r num">{{ t_terbayar|money }}</td>
+        <td class="r num" style="font-weight:700;color:{{ 'var(--alert)' if t_sisa < 0 else 'var(--paid)' }}">{{ t_sisa|money }}</td>
+      </tr></tfoot>
+      {% endif %}
+    </table>
+    </div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+  <div class="card">
+    <div class="card-h"><div class="t">Preliminaries</div></div>
+    <div class="card-b" style="padding:12px 16px">
+      {% for p in prelim_items %}
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--line)">
+        <span>{{ p.uraian }}</span><span class="num">{{ p.total|money }}</span>
+      </div>
+      {% else %}
+      <div style="color:var(--ink-3);font-size:12px">Belum ada item prelim.</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="t">Risk Allowance</div></div>
+    <div class="card-b" style="padding:12px 16px">
+      {% for rk in risk_items %}
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--line)">
+        <span>{{ rk.nama }} <span style="color:var(--ink-3)">· {{ rk.status }}</span></span><span class="num">{{ rk.nilai|money }}</span>
+      </div>
+      {% else %}
+      <div style="color:var(--ink-3);font-size:12px">Belum ada risk allowance.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const projectId = {{ project.id }};
+const versionId = {{ version.id if version else 'null' }};
+
+document.getElementById('btnNewVersion')?.addEventListener('click', async () => {
+  if (!confirm('Buat versi baru? Versi aktif akan diset superseded.')) return;
+  const res = await fetch(`/api/projects/${projectId}/rap/versions`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({catatan_revisi: 'Revisi dari UI'})
+  });
+  if (res.ok) location.reload();
+  else alert('Gagal buat versi baru');
+});
+
+document.getElementById('rapItemForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (versionId === null) return;
+  const f = e.target;
+  const body = {
+    project_id: projectId, rap_version_id: versionId,
+    kode_rap: f.kode_rap.value.trim(),
+    uraian_baku: f.uraian_baku.value.trim(),
+    jenis_biaya: f.jenis_biaya.value,
+    satuan: f.satuan.value.trim(),
+    vol_boq: parseFloat(f.vol_boq.value) || 0,
+    faktor: parseFloat(f.faktor.value) || 1,
+    hsat_rap: parseFloat(f.hsat_rap.value) || 0,
+    sumber_harga: f.sumber_harga.value,
+  };
+  const res = await fetch('/api/rap-items', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal simpan'); }
+});
+</script>
+{% endblock %}

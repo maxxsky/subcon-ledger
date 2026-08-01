@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Proyek — Subcon Ledger{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <div class="eyebrow">Manajemen Proyek</div>
+    <h1 class="page" style="margin-top:6px">Proyek</h1>
+  </div>
+</div>
+
+{% if current_role=='admin' %}
+<div class="card" style="margin-bottom:18px">
+  <div class="card-h"><div class="t">+ Tambah Proyek</div></div>
+  <div class="card-b">
+    <form method="POST" style="display:grid;grid-template-columns:1.6fr 1fr 1fr 120px 110px;gap:10px;align-items:end">
+      <div><label class="fld">Nama proyek <span class="req">*</span></label><input class="inp" name="nama" required></div>
+      <div><label class="fld">Lokasi</label><input class="inp" name="lokasi"></div>
+      <div><label class="fld">Nilai kontrak (Rp)</label><input class="inp num" type="number" name="nilai_kontrak"></div>
+      <div><label class="fld">Margin tender %</label><input class="inp num" type="number" step="0.1" name="margin_tender_pct"></div>
+      <div><label class="fld">Mulai</label><input class="inp" type="date" name="tanggal_mulai"></div>
+      <div><label class="fld">Durasi (bln)</label><input class="inp num" type="number" name="durasi_rencana_bulan"></div>
+      <div><label class="fld">Status</label>
+        <select class="inp" name="status"><option>aktif</option><option>selesai</option><option>draft</option></select>
+      </div>
+      <div><button class="btn btn-primary btn-block" type="submit">Buat</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-b flush">
+    <table class="tbl">
+      <thead><tr><th>Proyek</th><th>Lokasi</th><th class="r">Nilai Kontrak</th><th class="r">Margin</th><th>Status</th><th style="width:60px"></th></tr></thead>
+      <tbody>
+        {% for p in projects %}
+        <tr class="click" onclick="location.href='/projects/{{ p.id }}/rap'">
+          <td class="name">{{ p.nama }}{% if active_project and p.id==active_project.id %} <span class="chip chip-accent">aktif</span>{% endif %}</td>
+          <td style="font-size:12px;color:var(--ink-2)">{{ p.lokasi or '—' }}</td>
+          <td class="r num">{{ p.nilai_kontrak|money }}</td>
+          <td class="r num">{% if p.margin_tender_pct is not none %}{{ p.margin_tender_pct }}%{% else %}—{% endif %}</td>
+          <td><span class="chip {{ 'chip-paid' if p.status=='aktif' else 'chip-mute' }}">{{ p.status }}</span></td>
+          <td><a class="btn btn-sm btn-ghost" href="/projects/{{ p.id }}/switch">pilih</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada proyek. Buat proyek pertama untuk mulai menyusun RAP.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
