@@ -14,7 +14,7 @@ from flask import (Flask, render_template, request, redirect, url_for,
 from werkzeug.utils import secure_filename
 
 import config
-from models import db, Subcon, SPK, Payment, AuditLog
+from models import db, Vendor, Project, SPK, Certificate, Payment, AuditLog
 from parsers.sertifikat import parse_sertifikat
 from werkzeug.security import check_password_hash
 
@@ -71,6 +71,26 @@ def admin_required(f):
 
 def current_user():
     return session.get("user", "")
+
+
+def _default_project():
+    """Proyek default — Fase 1 belum ada UI project, semua SPK nempel ke proyek pertama."""
+    p = Project.query.order_by(Project.id).first()
+    if not p:
+        p = Project(nama="Proyek Default")
+        db.session.add(p)
+        db.session.flush()
+    return p
+
+
+def _parse_date_str(s):
+    """Parse string tanggal YYYY-MM-DD → date object, None kalau invalid."""
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(str(s)[:10])
+    except ValueError:
+        return None
 
 
 def audit(action, entity="", entity_id=None, detail=""):
@@ -141,7 +161,7 @@ def logout():
 @app.route("/")
 @login_required
 def dashboard():
-    subcons = Subcon.query.order_by(Subcon.name).all()
+    subcons = Vendor.query.order_by(Vendor.name).all()
 
     grand_contract = sum(s.total_contract for s in subcons)
     grand_final_contract = sum(s.total_final_contract for s in subcons)
@@ -189,7 +209,7 @@ def dashboard():
 @app.route("/api/summary")
 @login_required
 def api_summary():
-    subcons = Subcon.query.order_by(Subcon.name).all()
+    subcons = Vendor.query.order_by(Vendor.name).all()
 
     sorted_by_contract = sorted(subcons, key=lambda s: s.total_contract, reverse=True)
     top10 = sorted_by_contract[:10]
@@ -198,9 +218,8 @@ def api_summary():
     monthly = defaultdict(float)
     all_payments = Payment.query.all()
     for p in all_payments:
-        d = (p.date or "").strip()
-        if len(d) >= 7 and d[4] == "-":
-            monthly[d[:7]] += p.amount
+        if p.date:
+            monthly[p.date.strftime("%Y-%m")] += p.amount
 
     sorted_months = sorted(monthly.keys())
     timeline = sorted_months[-12:] if len(sorted_months) > 12 else sorted_months
@@ -230,7 +249,7 @@ def api_summary():
 @app.route("/subcons")
 @login_required
 def subcon_list():
-    subcons = Subcon.query.order_by(Subcon.name).all()
+    subcons = Vendor.query.order_by(Vendor.name).all()
     return render_template("subcon_list.html", subcons=subcons)
 
 
@@ -243,20 +262,20 @@ def subcon_new():
             flash("Nama subkon tidak boleh kosong.", "danger")
             return render_template("subcon_form.html")
 
-        existing = Subcon.query.filter(
-            db.func.lower(Subcon.name) == name.lower()
+        existing = Vendor.query.filter(
+            db.func.lower(Vendor.name) == name.lower()
         ).first()
         if existing:
             flash(f"Subkon '{name}' sudah ada.", "warning")
             return redirect(url_for("subcon_detail", subcon_id=existing.id))
 
-        subcon = Subcon(name=name)
-        db.session.add(subcon)
+        vendor = Vendor(name=name)
+        db.session.add(vendor)
         db.session.flush()
-        audit("add_subcon", "subcon", subcon.id, f"name={name}")
+        audit("add_subcon", "vendor", vendor.id, f"name={name}")
         db.session.commit()
         flash(f"Subkon '{name}' berhasil ditambahkan.", "success")
-        return redirect(url_for("subcon_detail", subcon_id=subcon.id))
+        return redirect(url_for("subcon_detail", subcon_id=vendor.id))
 
     return render_template("subcon_form.html")
 
@@ -264,14 +283,14 @@ def subcon_new():
 @app.route("/subcons/<int:subcon_id>")
 @login_required
 def subcon_detail(subcon_id):
-    subcon = Subcon.query.get_or_404(subcon_id)
-    return render_template("subcon_detail.html", subcon=subcon)
+    vendor = Vendor.query.get_or_404(subcon_id)
+    return render_template("subcon_detail.html", subcon=vendor)
 
 
 @app.route("/subcons/<int:subcon_id>/add_spk", methods=["POST"])
 @admin_required
 def add_spk(subcon_id):
-    subcon = Subcon.query.get_or_404(subcon_id)
+    vendor = Vendor.query.get_or_404(subcon_id)
     spk_number = request.form.get("spk_number", "").strip()
     desc = request.form.get("work_description", "").strip()
     contract = float(request.form.get("contract_value", 0) or 0)
@@ -282,20 +301,17 @@ def add_spk(subcon_id):
         flash("Nomor SPK/PO tidak boleh kosong.", "danger")
         return redirect(url_for("subcon_detail", subcon_id=subcon_id))
 
-    ret_date = None
-    if ret_date_raw:
-        try:
-            ret_date = date.fromisoformat(ret_date_raw)
-        except ValueError:
-            pass
+    ret_date = _parse_date_str(ret_date_raw)
 
-    spk = SPK(subcon_id=subcon_id, spk_number=spk_number,
+    project = _default_project()
+    spk = SPK(vendor_id=subcon_id, project_id=project.id,
+              spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
               work_description=desc, contract_value=contract,
               retention_pct=ret_pct, retention_release_date=ret_date)
     db.session.add(spk)
     db.session.flush()
     audit("add_spk", "spk", spk.id,
-          f"subcon={subcon.name}, spk={spk_number}, contract={contract}")
+          f"vendor={vendor.name}, spk={spk_number}, contract={contract}")
     db.session.commit()
     flash(f"SPK '{spk_number}' berhasil ditambahkan.", "success")
     return redirect(url_for("subcon_detail", subcon_id=subcon_id))
@@ -351,7 +367,7 @@ def upload_preview():
         return redirect(url_for("upload"))
 
     result = pending["result"]
-    subcons = Subcon.query.order_by(Subcon.name).all()
+    subcons = Vendor.query.order_by(Vendor.name).all()
 
     if request.method == "POST":
         added = {"payments": 0, "subcons": 0, "spks": 0}
@@ -365,6 +381,8 @@ def upload_preview():
                     r = max(r, p.get("total_pengurangan", 0) or 0)
             return a, r
 
+        project = _default_project()
+
         for i, pd in enumerate(result["payments"]):
             if request.form.get(f"confirm_{i}") != "1":
                 continue
@@ -377,26 +395,26 @@ def upload_preview():
                 if not name:
                     errors.append(f"SP-{pd['payment_num']}: nama subkon baru kosong.")
                     continue
-                subcon = Subcon.query.filter(
-                    db.func.lower(Subcon.name) == name.lower()
+                vendor = Vendor.query.filter(
+                    db.func.lower(Vendor.name) == name.lower()
                 ).first()
-                if not subcon:
-                    subcon = Subcon(name=name)
-                    db.session.add(subcon)
+                if not vendor:
+                    vendor = Vendor(name=name)
+                    db.session.add(vendor)
                     db.session.flush()
-                    audit("add_subcon", "subcon", subcon.id,
+                    audit("add_subcon", "vendor", vendor.id,
                           f"from_sertifikat, name={name}")
                     added["subcons"] += 1
 
                 spk_number = pd.get("spk_number", "").strip()
                 spk = SPK.query.filter(
-                    SPK.subcon_id == subcon.id,
+                    SPK.vendor_id == vendor.id,
                     SPK.spk_number == spk_number
                 ).first()
                 if spk is None:
                     spk = SPK(
-                        subcon_id=subcon.id,
-                        spk_number=spk_number,
+                        vendor_id=vendor.id, project_id=project.id,
+                        spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
                         work_description=pd.get("work_desc", ""),
                         contract_value=pd.get("contract_value", 0),
                         retention_pct=pd.get("retention_pct", config.DEFAULT_RETENTION_PCT),
@@ -406,7 +424,7 @@ def upload_preview():
                     db.session.add(spk)
                     db.session.flush()
                     audit("add_spk", "spk", spk.id,
-                          f"from_sertifikat, subcon={subcon.name}, spk={spk_number}")
+                          f"from_sertifikat, vendor={vendor.name}, spk={spk_number}")
                     added["spks"] += 1
 
             else:
@@ -415,8 +433,8 @@ def upload_preview():
                 if not subcon_id:
                     errors.append(f"SP-{pd['payment_num']}: subkon belum dipilih.")
                     continue
-                subcon = Subcon.query.get(int(subcon_id))
-                if not subcon:
+                vendor = Vendor.query.get(int(subcon_id))
+                if not vendor:
                     errors.append(f"SP-{pd['payment_num']}: subkon tidak valid.")
                     continue
 
@@ -424,13 +442,13 @@ def upload_preview():
                     spk_number = pd.get("spk_number", "").strip()
                     # Cek dulu apakah SPK dengan nomer ini sudah ada
                     spk = SPK.query.filter(
-                        SPK.subcon_id == subcon.id,
+                        SPK.vendor_id == vendor.id,
                         SPK.spk_number == spk_number
                     ).first()
                     if spk is None:
                         spk = SPK(
-                            subcon_id=subcon.id,
-                            spk_number=spk_number,
+                            vendor_id=vendor.id, project_id=project.id,
+                            spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
                             work_description=pd.get("work_desc", ""),
                             contract_value=pd.get("contract_value", 0),
                             retention_pct=pd.get("retention_pct", config.DEFAULT_RETENTION_PCT),
@@ -440,52 +458,73 @@ def upload_preview():
                         db.session.add(spk)
                         db.session.flush()
                         audit("add_spk", "spk", spk.id,
-                              f"from_sertifikat, subcon={subcon.name}, spk={spk_number}")
+                              f"from_sertifikat, vendor={vendor.name}, spk={spk_number}")
                         added["spks"] += 1
                 elif spk_id_raw:
                     spk = SPK.query.get(int(spk_id_raw))
-                    if not spk or spk.subcon_id != subcon.id:
+                    if not spk or spk.vendor_id != vendor.id:
                         errors.append(f"SP-{pd['payment_num']}: SPK tidak valid.")
                         continue
                 else:
                     errors.append(f"SP-{pd['payment_num']}: SPK belum dipilih.")
                     continue
 
+            pdate = _parse_date_str(pd.get("date", ""))
+
+            # DP — Payment tanpa Certificate
             if pd.get("dp_amount", 0) > 0:
                 if not Payment.query.filter_by(spk_id=spk.id, is_dp=True).first():
                     db.session.add(Payment(
-                        spk_id=spk.id, description="Pembayaran DP / Uang Muka",
-                        amount=pd["dp_amount"], date=pd["date"], payment_number=0,
-                        is_dp=True, source="sertifikat",
-                        sertifikat_file=pending["filename"], created_by=current_user()))
+                        spk_id=spk.id, amount=pd["dp_amount"], date=pdate,
+                        is_dp=True, created_by=current_user()))
+                    audit("add_payment", "payment", None,
+                          f"source=sertifikat, dp, sp={pd['payment_num']}, amount={pd['dp_amount']}")
 
-            # Payment utama — simpan progress_factor (fisik) dari G32
+            # Payment utama — simpan progress_factor (fisik) di Certificate
             cp = pd.get("cumulative_progress", 0)
             pf = cp if (cp is not None and cp > 0) else None
 
-            # Cek duplikat — overwrite kalo sudah ada
-            existing = Payment.query.filter_by(
-                spk_id=spk.id, payment_number=pd["payment_num"]
+            # Cek duplikat — overwrite kalo sudah ada (match by certificate nomor)
+            existing_cert = Certificate.query.filter_by(
+                spk_id=spk.id, nomor=str(pd["payment_num"])
             ).first()
-            if existing:
-                existing.amount = pd["net_payment"]
-                existing.date = pd["date"]
-                existing.progress_factor = pf
-                existing.sertifikat_file = pending["filename"]
-                audit("update_payment", "payment", existing.id,
-                      f"overwrite, file={pending['filename']}, "
-                      f"sp={pd['payment_num']}, amount={pd['net_payment']}")
+            if existing_cert:
+                existing_cert.nilai_tersertifikasi = pd["net_payment"]
+                existing_cert.progress_factor = pf
+                existing_cert.sertifikat_file = pending["filename"]
+                existing_cert.tanggal = pdate
+                if existing_cert.payments:
+                    ep = existing_cert.payments[0]
+                    ep.amount = pd["net_payment"]
+                    ep.date = pdate
+                    audit("update_payment", "payment", ep.id,
+                          f"overwrite, file={pending['filename']}, "
+                          f"sp={pd['payment_num']}, amount={pd['net_payment']}")
+                else:
+                    db.session.add(Payment(
+                        spk_id=spk.id, certificate_id=existing_cert.id,
+                        amount=pd["net_payment"], date=pdate,
+                        is_dp=False, created_by=current_user()))
+                    audit("add_payment", "payment", None,
+                          f"source=sertifikat, file={pending['filename']}, "
+                          f"sp={pd['payment_num']}, amount={pd['net_payment']}")
                 added["payments"] += 1
                 continue
-            p = Payment(
-                spk_id=spk.id, description=pd["payment_desc"], amount=pd["net_payment"],
-                date=pd["date"], payment_number=pd["payment_num"], is_dp=False,
-                progress_factor=pf,
-                source="sertifikat", sertifikat_file=pending["filename"],
-                created_by=current_user())
-            db.session.add(p)
+
+            cert = Certificate(
+                spk_id=spk.id, nomor=str(pd["payment_num"]),
+                periode=pdate.strftime("%Y-%m") if pdate else None,
+                tanggal=pdate, nilai_tersertifikasi=pd["net_payment"],
+                progress_factor=pf, sertifikat_file=pending["filename"],
+                source="sertifikat", created_by=current_user())
+            db.session.add(cert)
             db.session.flush()
-            audit("add_payment", "payment", p.id,
+            db.session.add(Payment(
+                spk_id=spk.id, certificate_id=cert.id,
+                amount=pd["net_payment"], date=pdate,
+                is_dp=False, created_by=current_user()))
+            db.session.flush()
+            audit("add_payment", "payment", None,
                   f"source=sertifikat, file={pending['filename']}, "
                   f"sp={pd['payment_num']}, amount={pd['net_payment']}")
             added["payments"] += 1
@@ -563,7 +602,7 @@ def upload_cancel():
 @app.route("/manual", methods=["GET", "POST"])
 @admin_required
 def manual_input():
-    subcons_list = Subcon.query.order_by(Subcon.name).all()
+    subcons_list = Vendor.query.order_by(Vendor.name).all()
 
     if request.method == "POST":
         subcon_id = request.form.get("subcon_id")
@@ -577,8 +616,8 @@ def manual_input():
             flash("Pilih subkon.", "danger")
             return render_template("manual_input.html", subcons=subcons_list)
 
-        subcon = Subcon.query.get(int(subcon_id))
-        if not subcon:
+        vendor = Vendor.query.get(int(subcon_id))
+        if not vendor:
             flash("Subkon tidak valid.", "danger")
             return render_template("manual_input.html", subcons=subcons_list)
 
@@ -587,31 +626,42 @@ def manual_input():
             if not spk_number:
                 flash("Nomor SPK/PO tidak boleh kosong.", "danger")
                 return render_template("manual_input.html", subcons=subcons_list)
-            spk = SPK(subcon_id=subcon.id, spk_number=spk_number,
+            project = _default_project()
+            spk = SPK(vendor_id=vendor.id, project_id=project.id,
+                      spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
                       work_description=request.form.get("new_work_desc", "").strip(),
                       contract_value=0)
             db.session.add(spk)
             db.session.flush()
             audit("add_spk", "spk", spk.id,
-                  f"manual, subcon={subcon.name}, spk={spk_number}")
+                  f"manual, vendor={vendor.name}, spk={spk_number}")
         elif spk_id_raw:
             spk = SPK.query.get(int(spk_id_raw))
-            if not spk or spk.subcon_id != subcon.id:
+            if not spk or spk.vendor_id != vendor.id:
                 flash("SPK tidak valid.", "danger")
                 return render_template("manual_input.html", subcons=subcons_list)
         else:
             flash("Pilih SPK.", "danger")
             return render_template("manual_input.html", subcons=subcons_list)
 
-        p = Payment(spk_id=spk.id, description=desc, amount=amount,
-                    date=date_str, source="manual", created_by=current_user())
+        pdate = _parse_date_str(date_str)
+
+        # Manual payment → Certificate (nilai = amount) + Payment
+        cert = Certificate(
+            spk_id=spk.id, nomor="", periode=pdate.strftime("%Y-%m") if pdate else None,
+            tanggal=pdate, nilai_tersertifikasi=amount,
+            source="manual", created_by=current_user())
+        db.session.add(cert)
+        db.session.flush()
+        p = Payment(spk_id=spk.id, certificate_id=cert.id, amount=amount,
+                    date=pdate, is_dp=False, created_by=current_user())
         db.session.add(p)
         db.session.flush()
         audit("add_payment", "payment", p.id,
-              f"manual, subcon={subcon.name}, spk={spk.spk_number}, amount={amount}")
+              f"manual, vendor={vendor.name}, spk={spk.spk_number}, amount={amount}")
         db.session.commit()
         flash(f"Pembayaran Rp {amount:,.0f} berhasil ditambahkan.", "success")
-        return redirect(url_for("subcon_detail", subcon_id=subcon.id))
+        return redirect(url_for("subcon_detail", subcon_id=vendor.id))
 
     return render_template("manual_input.html", subcons=subcons_list)
 
@@ -620,7 +670,7 @@ def manual_input():
 @app.route("/api/subcon/<int:subcon_id>/spks")
 @login_required
 def api_spks(subcon_id):
-    spks = SPK.query.filter_by(subcon_id=subcon_id).all()
+    spks = SPK.query.filter_by(vendor_id=subcon_id).all()
     return jsonify([{
         "id": sk.id,
         "spk_number": sk.spk_number,
@@ -644,7 +694,7 @@ def export_excel():
     from exporters.excel import generate_excel
     output_dir = os.path.join(config.BASE_DIR, "exports")
     os.makedirs(output_dir, exist_ok=True)
-    path = generate_excel(output_dir)
+    path = generate_excel(Vendor.query.order_by(Vendor.name).all())
     return send_file(path, as_attachment=True,
                      download_name="Monitoring_Pembayaran_Subkon.xlsx")
 
@@ -675,7 +725,7 @@ def delete_payment(payment_id):
     # Redirect ke halaman subcon tempat payment berasal
     spk = SPK.query.get(spk_id)
     if spk:
-        return redirect(url_for("subcon_detail", subcon_id=spk.subcon_id))
+        return redirect(url_for("subcon_detail", subcon_id=spk.vendor_id))
     return redirect(url_for("dashboard"))
 
 

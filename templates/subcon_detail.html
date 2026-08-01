@@ -83,16 +83,17 @@
             <tbody>
               {% set ns = namespace(c=0, prev_pf=none) %}
               {% for p in spk.payments %}{% set ns.c = ns.c + p.amount %}
+              {% set cert = p.certificate %}
               {% set pv = (ns.c / spk.payable * 100)|round(1) if spk.payable>0 else 0 %}
-              {% set is_ret = (not p.is_dp) and ns.prev_pf is not none and p.progress_factor and ns.prev_pf == p.progress_factor %}
-              {% set ns.prev_pf = p.progress_factor if p.progress_factor else ns.prev_pf %}
+              {% set is_ret = (not p.is_dp) and ns.prev_pf is not none and cert and cert.progress_factor and ns.prev_pf == cert.progress_factor %}
+              {% set ns.prev_pf = cert.progress_factor if cert and cert.progress_factor else ns.prev_pf %}
               <tr style="font-size:11px">
-                <td>{{ p.description }}{% if p.is_dp %} <span class="chip chip-accent">DP</span>{% endif %}</td>
+                <td>{% if p.is_dp %}Pembayaran DP / Uang Muka{% elif cert and cert.nomor %}Sertifikat #{{ cert.nomor }}{% else %}Pembayaran{% endif %}{% if p.is_dp %} <span class="chip chip-accent">DP</span>{% endif %}</td>
                 <td class="r num" style="font-weight:600">{{ p.amount|money }}</td>
                 <td class="r num" style="color:var(--ink-3)">{{ ns.c|money }}</td>
-                <td class="r num">{% if p.is_dp %}—{% elif is_ret %}Retensi{% elif p.progress_factor %}{{ (p.progress_factor * 100)|round(2) }}%{% else %}{{ pv }}%{% endif %}</td>
+                <td class="r num">{% if p.is_dp %}—{% elif is_ret %}Retensi{% elif cert and cert.progress_factor %}{{ (cert.progress_factor * 100)|round(2) }}%{% else %}{{ pv }}%{% endif %}</td>
                 <td class="num" style="font-size:11px">{{ p.date or '—' }}</td>
-                <td>{% if p.source=='sertifikat' %}<span class="chip chip-accent" style="font-size:10px">sertifikat</span>{% else %}<span class="chip chip-mute" style="font-size:10px">manual</span>{% endif %}</td>
+                <td>{% if cert and cert.source=='sertifikat' %}<span class="chip chip-accent" style="font-size:10px">sertifikat</span>{% else %}<span class="chip chip-mute" style="font-size:10px">manual</span>{% endif %}</td>
                 <td class="num" style="font-size:11px;color:var(--ink-3)">{{ p.created_by or '—' }}</td>
                 <td>{% if current_role=='admin' %}<form method="POST" action="/payment/{{ p.id }}/delete" style="display:inline" onsubmit="return confirm('Hapus pembayaran ini?')"><button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--alert)">×</button></form>{% endif %}</td>
               </tr>

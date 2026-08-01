@@ -1,24 +1,30 @@
 """
-Models — SQLAlchemy ORM untuk Subcon Payment Monitor.
-Struktur: Subcon → SPK/PO → Payment
+Models — SQLAlchemy ORM untuk Subcon Ledger.
+Struktur: Project → Vendor → SPK/PO → Certificate → Payment
 """
-
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 
 
-class Subcon(db.Model):
-    __tablename__ = "subcons"
+class Vendor(db.Model):
+    """Vendor global lintas proyek — subkon atau supplier (Fase 6: riwayat vendor)."""
+    __tablename__ = "vendors"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
+    jenis = db.Column(db.String(20), default="subkon")   # "subkon" | "supplier"
+    kontak = db.Column(db.String(100), nullable=True)
+    wilayah = db.Column(db.String(100), nullable=True)
+    npwp = db.Column(db.String(50), nullable=True)
+    aktif = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    spks = db.relationship("SPK", backref="subcon",
+    spks = db.relationship("SPK", backref="vendor",
                            cascade="all, delete-orphan", lazy=True)
 
+    # ── Angka turunan — basis KONSISTEN: total_final_contract (B1) ──
     @property
     def total_contract(self):
         return sum(spk.contract_value for spk in self.spks)
@@ -67,7 +73,7 @@ class Subcon(db.Model):
 
     @property
     def segments(self):
-        c = self.total_contract
+        c = self.total_final_contract
         if c <= 0:
             return {"paid_pct": 0, "remaining_pct": 0, "retention_pct": 0, "overbill": False}
         paid = self.total_paid
@@ -89,11 +95,17 @@ class Subcon(db.Model):
         return {
             "id": self.id,
             "name": self.name,
+            "jenis": self.jenis,
+            "kontak": self.kontak,
+            "wilayah": self.wilayah,
+            "npwp": self.npwp,
+            "aktif": self.aktif,
             "total_contract": self.total_contract,
+            "total_final_contract": self.total_final_contract,
             "total_paid": self.total_paid,
             "total_retention": self.total_retention,
             "payable": self.payable,
-            "sisa": max(self.total_contract - self.total_paid, 0),
+            "sisa": max(self.total_final_contract - self.total_paid, 0),
             "pct_vs_contract": self.pct_vs_contract,
             "pct_vs_payable": self.pct_vs_payable,
             "is_lunas": self.is_lunas,
@@ -101,11 +113,49 @@ class Subcon(db.Model):
         }
 
 
+class Project(db.Model):
+    __tablename__ = "projects"
+
+    id = db.Column(db.Integer, primary_key=True)
+    nama = db.Column(db.String(200), nullable=False)
+    lokasi = db.Column(db.String(200), nullable=True)
+    nilai_kontrak = db.Column(db.Float, default=0.0)
+    margin_tender_pct = db.Column(db.Float, nullable=True)
+    tanggal_mulai = db.Column(db.Date, nullable=True)
+    durasi_rencana_bulan = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(50), default="aktif")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spks = db.relationship("SPK", backref="project", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "nama": self.nama,
+            "lokasi": self.lokasi,
+            "nilai_kontrak": self.nilai_kontrak,
+            "margin_tender_pct": self.margin_tender_pct,
+            "status": self.status,
+        }
+
+
 class SPK(db.Model):
     __tablename__ = "spks"
 
     id = db.Column(db.Integer, primary_key=True)
-    subcon_id = db.Column(db.Integer, db.ForeignKey("subcons.id"), nullable=False)
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
+    # Kolom FK fase berikutnya — int nullable sekarang, constraint ditambah saat tabel tujuan ada
+    rap_item_id = db.Column(db.Integer, nullable=True)            # FK Fase 2
+    procurement_request_id = db.Column(db.Integer, nullable=True)  # FK Fase 3
+    prelim_item_id = db.Column(db.Integer, nullable=True)          # FK Fase 2
+    variation_id = db.Column(db.Integer, nullable=True)            # FK Fase 3
+    jenis = db.Column(db.String(10), default="SPK")                # "SPK" | "PO"
+    tanggal_terbit = db.Column(db.Date, nullable=True)
+    status = db.Column(db.String(20), default="aktif")
+    # alokasi_biaya wajib diisi di level aplikasi, tanpa opsi "lain-lain"
+    alokasi_biaya = db.Column(db.String(20), default="rap_item")   # rap_item|prelim|variation|rework|proyek_lain
+
     spk_number = db.Column(db.String(200), default="")
     work_description = db.Column(db.String(500), default="")
     contract_value = db.Column(db.Float, default=0.0)
@@ -115,6 +165,8 @@ class SPK(db.Model):
     total_reductions = db.Column(db.Float, default=0.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    certificates = db.relationship("Certificate", backref="spk",
+                                   cascade="all, delete-orphan", lazy=True)
     payments = db.relationship("Payment", backref="spk",
                                cascade="all, delete-orphan", lazy=True)
 
@@ -148,20 +200,18 @@ class SPK(db.Model):
 
     @property
     def retention_due_date(self):
-        """Tanggal jatuh tempo retensi: 1 tahun setelah progress 100%."""
-        from datetime import datetime, timedelta
-        # Cari payment pertama yang progressnya >= 99,5%
+        """Tanggal jatuh tempo retensi: 1 tahun setelah sertifikat progress 100%."""
+        from datetime import timedelta
         pct_100 = None
-        for p in sorted(self.payments, key=lambda x: x.payment_number or 0):
-            if p.progress_factor and p.progress_factor >= 0.995:
-                pct_100 = p
+        for c in sorted(self.certificates, key=lambda x: x.id):
+            if c.progress_factor and c.progress_factor >= 0.995:
+                pct_100 = c
                 break
-        if not pct_100:
+        if not pct_100 or not pct_100.tanggal:
             return None
         try:
-            dt = datetime.strptime(pct_100.date, "%Y-%m-%d")
-            return (dt + timedelta(days=365)).strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+            return (pct_100.tanggal + timedelta(days=365)).strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
             return None
 
     @property
@@ -197,9 +247,9 @@ class SPK(db.Model):
     @property
     def progress_pct(self):
         last_pf = None
-        for p in sorted(self.payments, key=lambda x: x.payment_number or 0):
-            if p.progress_factor and p.progress_factor > 0:
-                last_pf = p.progress_factor
+        for c in sorted(self.certificates, key=lambda x: x.id):
+            if c.progress_factor and c.progress_factor > 0:
+                last_pf = c.progress_factor
         if last_pf:
             return round(last_pf * 100, 2)
         if self.final_contract <= 0:
@@ -235,6 +285,8 @@ class SPK(db.Model):
     def to_dict(self):
         return {
             "id": self.id,
+            "vendor_id": self.vendor_id,
+            "project_id": self.project_id,
             "spk_number": self.spk_number,
             "work_description": self.work_description,
             "contract_value": self.contract_value,
@@ -248,37 +300,69 @@ class SPK(db.Model):
             "sisa_bayar": self.sisa_bayar,
             "progress_pct": self.progress_pct,
             "retention_due_soon": self.retention_due_soon,
+            "jenis": self.jenis,
+            "tanggal_terbit": self.tanggal_terbit.isoformat() if self.tanggal_terbit else None,
+            "status": self.status,
+            "alokasi_biaya": self.alokasi_biaya,
             "payments": [p.to_dict() for p in self.payments],
         }
 
 
+class Certificate(db.Model):
+    """Sertifikat pembayaran — satu sertifikat bisa punya banyak Payment."""
+    __tablename__ = "certificates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id"), nullable=False)
+    nomor = db.Column(db.String(100), default="")          # was: payment_number
+    periode = db.Column(db.String(10), nullable=True)      # "2026-08"
+    tanggal = db.Column(db.Date, nullable=True)
+    nilai_tersertifikasi = db.Column(db.Float, default=0.0)
+    progress_factor = db.Column(db.Float, nullable=True)
+    sertifikat_file = db.Column(db.String(300), nullable=True)
+    source = db.Column(db.String(20), default="manual")
+    created_by = db.Column(db.String(50), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    payments = db.relationship("Payment", backref="certificate", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "spk_id": self.spk_id,
+            "nomor": self.nomor,
+            "periode": self.periode,
+            "tanggal": self.tanggal.isoformat() if self.tanggal else None,
+            "nilai_tersertifikasi": self.nilai_tersertifikasi,
+            "progress_factor": self.progress_factor,
+            "sertifikat_file": self.sertifikat_file,
+            "source": self.source,
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 class Payment(db.Model):
+    """Pembayaran — DP & pencairan retensi tanpa certificate (certificate_id NULL)."""
     __tablename__ = "payments"
 
     id = db.Column(db.Integer, primary_key=True)
     spk_id = db.Column(db.Integer, db.ForeignKey("spks.id"), nullable=False)
-    description = db.Column(db.String(200), nullable=False)
+    certificate_id = db.Column(db.Integer, db.ForeignKey("certificates.id"), nullable=True)
     amount = db.Column(db.Float, nullable=False)
-    date = db.Column(db.String(20), default="")
-    payment_number = db.Column(db.Integer, nullable=True)
+    date = db.Column(db.Date, nullable=True)   # was String(20) — B2
     is_dp = db.Column(db.Boolean, default=False)
-    source = db.Column(db.String(20), default="manual")
-    sertifikat_file = db.Column(db.String(300), nullable=True)
-    progress_factor = db.Column(db.Float, nullable=True)
     created_by = db.Column(db.String(50), default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
             "id": self.id,
-            "description": self.description,
+            "spk_id": self.spk_id,
+            "certificate_id": self.certificate_id,
             "amount": self.amount,
-            "date": self.date,
-            "payment_number": self.payment_number,
+            "date": self.date.isoformat() if self.date else None,
             "is_dp": self.is_dp,
-            "source": self.source,
-            "sertifikat_file": self.sertifikat_file,
-            "progress_factor": self.progress_factor,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat(),
         }

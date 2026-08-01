@@ -99,16 +99,31 @@ Tidak ada payment yang tersimpan tanpa konfirmasi eksplisit dari user.
 ```
 subcon-monitor/
 ├── app.py              # Flask app + routes
-├── models.py           # SQLAlchemy models
-├── config.py           # Konfigurasi (users, cell coordinates, dll)
+├── models.py           # SQLAlchemy models (Vendor, Project, SPK, Certificate, Payment)
+├── config.py           # Konfigurasi (users, cell coordinates, dll) — gitignored
+├── config.example.py   # Template config
+├── exporters/
+│   └── excel.py        # Generate Excel monitoring
 ├── parsers/
 │   └── sertifikat.py   # Parser sertifikat .xlsx
-├── exports/
-│   └── excel.py        # Generate Excel monitoring
+├── scripts/
+│   ├── hash_passwords.py  # Migrasi password plaintext → hash werkzeug
+│   └── migrate_fase1.py   # One-off migrasi skema (subcons→vendors, payment split)
+├── migrations/         # Alembic (migrasi skema fase berikutnya)
 ├── templates/          # Jinja2 HTML templates
-├── uploads/            # File sertifikat yang diupload
+├── uploads/            # File sertifikat yang diupload — gitignored
 ├── data/
-│   └── subcon.db       # SQLite database
-├── backups/            # Backup database
+│   └── subcon.db       # SQLite database — gitignored
+├── backups/            # Backup database — gitignored
 └── requirements.txt
 ```
+
+## Migrasi Database
+
+- **Fase 1** (sudah dijalankan): `venv/bin/python scripts/migrate_fase1.py`
+  Skema lama → baru: `subcons` → `vendors`, `payments` dipecah jadi `certificates` + `payments`, tabel `projects` baru.
+- **Fase berikutnya**: pakai Alembic
+  ```bash
+  venv/bin/alembic revision --autogenerate -m "deskripsi perubahan"
+  venv/bin/alembic upgrade head
+  ```

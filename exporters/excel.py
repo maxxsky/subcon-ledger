@@ -7,6 +7,7 @@ from datetime import datetime
 
 
 def generate_excel(subcons: list) -> str:
+    """Generate rekapitulasi pembayaran. `subcons` = list objek Vendor."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
@@ -76,21 +77,6 @@ def generate_excel(subcons: list) -> str:
             ws.cell(r, c).fill = PatternFill(start_color=LIGHT_BLUE, end_color=LIGHT_BLUE, fill_type="solid")
             ws.cell(r, c).border = thin()
         r += 1
-
-        # Work packages
-        for wp in sorted(subcon.work_packages, key=lambda w: w.code):
-            ws.cell(r, 1, wp.code).alignment = Alignment(horizontal="center")
-            ws.cell(r, 2, wp.description[:100]).font = Font(size=9)
-            ws.cell(r, 3, wp.contract_value).number_format = money_fmt
-            ws.cell(r, 4, wp.total_paid).number_format = money_fmt
-            ws.cell(r, 5, wp.retention_amount).number_format = money_fmt
-            ws.cell(r, 6, wp.sisa_bayar).number_format = money_fmt
-            ws.cell(r, 7, wp.progress_pct / 100).number_format = pct_fmt
-            ws.cell(r, 8, _status(wp.progress_pct))
-            for c in range(1, 9):
-                ws.cell(r, c).font = Font(size=9)
-                ws.cell(r, c).border = thin()
-            r += 1
 
     # Grand total
     ws.merge_cells(f"A{r}:B{r}")
