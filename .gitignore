@@ -14,6 +14,7 @@ exports/*.xlsx
 
 # ── Secrets — config lokal dengan password asli TIDAK boleh masuk repo ──
 config.py
+config.py.bak
 
 # ── OS / editor ──
 .DS_Store
