@@ -232,6 +232,26 @@ def main():
         SpkStatusLog(id=6, spk_id=2, status="terbit", timestamp=dt("2026-05-06T11:00:00"), user="Pusat"),
     ])
 
+    # ── Vendor 2 (PT Baja Utama Lombok) dipakai di proyek 1 DAN proyek 2 — uji lintas proyek ──
+    s.add_all([
+        SPK(id=101, project_id=1, vendor_id=2, rap_item_id=103,
+            spk_number="SPK-006/NRC-SBW/2026", jenis="PO",
+            work_description="Pengadaan Besi Ulir D16 tambahan",
+            contract_value=120000000, tanggal_terbit=d("2026-05-15"), status="aktif",
+            alokasi_biaya="rap_item"),
+        SPK(id=201, project_id=2, vendor_id=2,
+            spk_number="SPK-001/RUKO-MTR/2026", jenis="PO",
+            work_description="Pengadaan besi beton struktur ruko",
+            contract_value=350000000, tanggal_terbit=d("2026-06-10"), status="aktif",
+            alokasi_biaya="rap_item"),
+    ])
+    s.add_all([
+        SpkStatusLog(id=7, spk_id=101, status="diajukan", timestamp=dt("2026-05-05T09:00:00"), user="Brahma"),
+        SpkStatusLog(id=8, spk_id=101, status="terbit", timestamp=dt("2026-05-15T09:00:00"), user="Pusat"),
+        SpkStatusLog(id=9, spk_id=201, status="diajukan", timestamp=dt("2026-05-20T09:00:00"), user="Brahma"),
+        SpkStatusLog(id=10, spk_id=201, status="terbit", timestamp=dt("2026-06-10T09:00:00"), user="Pusat"),
+    ])
+
     # ── variations (Fase 3) ──
     s.add_all([
         Variation(id=1, project_id=1, nomor="VAR-001", rap_item_id=107,

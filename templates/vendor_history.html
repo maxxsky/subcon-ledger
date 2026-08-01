@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Riwayat Vendor — {{ vendor.name }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/subcons">← Subkontraktor</a>
+    <h1 class="page" style="margin-top:8px">{{ vendor.name }}</h1>
+    <div class="num" style="font-size:12px;color:var(--ink-3);margin-top:4px">
+      {{ vendor.jenis }} · {{ vendor.wilayah or '—' }} · {{ vendor.kontak or '—' }}
+      {% if vendor.npwp %}· NPWP {{ vendor.npwp }}{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-h">
+    <div class="t">Riwayat SPK Lintas Proyek</div>
+    <div style="font-size:11px;color:var(--ink-3)">Data dari semua proyek, bukan cuma yang aktif</div>
+  </div>
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap">
+      <thead><tr>
+        <th>Proyek</th><th style="min-width:180px">Nomor SPK/PO</th><th>Pekerjaan</th>
+        <th class="r">Nilai (final)</th><th>Terbit</th><th class="r">Lead Time</th><th>Status</th>
+      </tr></thead>
+      <tbody id="histBody">
+        <tr><td colspan="7" style="text-align:center;color:var(--ink-3);padding:24px">Memuat…</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+fetch('/api/vendors/{{ vendor.id }}/history')
+  .then(r => r.json())
+  .then(d => {
+    const body = document.getElementById('histBody');
+    if (!d.spks.length) {
+      body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada SPK untuk vendor ini.</td></tr>';
+      return;
+    }
+    body.innerHTML = d.spks.map(s => `
+      <tr style="font-size:12px">
+        <td style="font-weight:500">${s.project_nama}</td>
+        <td><a href="/subcons/${s.project_id ? '' : ''}">${s.nomor}</a></td>
+        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${s.rap_item_uraian || '—'}</td>
+        <td class="r num">${(s.nilai/1e6).toFixed(2)}Jt</td>
+        <td class="num" style="font-size:11px">${s.tanggal_terbit || '—'}</td>
+        <td class="r num" style="color:${s.lead_time_hari != null && s.lead_time_hari > 14 ? 'var(--alert)' : 'var(--ink-2)'}">${s.lead_time_hari != null ? s.lead_time_hari + ' hari' : '—'}</td>
+        <td><span class="chip chip-mute">${s.status}</span></td>
+      </tr>`).join('');
+  })
+  .catch(() => {
+    document.getElementById('histBody').innerHTML = '<tr><td colspan="7" style="color:var(--alert);padding:24px">Gagal memuat.</td></tr>';
+  });
+</script>
+{% endblock %}

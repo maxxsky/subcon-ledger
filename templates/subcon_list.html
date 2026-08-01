@@ -21,7 +21,7 @@
       <tbody>
         {% for s in subcons %}{% if s.total_contract>0 %}{% set sg=s.segments %}
         <tr class="click" onclick="location.href='/subcons/{{ s.id }}'">
-          <td class="name">{{ s.name }}</td>
+          <td class="name">{{ s.name }} <a href="/vendors/{{ s.id }}" class="chip chip-accent" style="font-size:9.5px;text-decoration:none" onclick="event.stopPropagation()">riwayat</a></td>
           <td class="num" style="font-size:11.5px;color:var(--ink-3)">{{ s.spks|length }} SPK</td>
           <td class="r num">{{ s.total_contract|money }}</td>
           <td class="r num">{{ s.total_paid|money }}</td>

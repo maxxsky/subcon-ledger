@@ -1373,5 +1373,38 @@ def api_accruals_list(project_id):
     return jsonify([a.to_dict() for a in accruals])
 
 
+# ── VENDOR HISTORY (lintas proyek) ──────────────────────────
+@app.route("/api/vendors/<int:vendor_id>/history")
+@login_required
+def api_vendor_history(vendor_id):
+    """Semua SPK untuk vendor, lintas proyek — vendors sengaja tanpa project_id."""
+    vendor = Vendor.query.get_or_404(vendor_id)
+    spks = SPK.query.filter_by(vendor_id=vendor_id) \
+                    .order_by(SPK.tanggal_terbit.is_(None), SPK.tanggal_terbit.asc()).all()
+    rows = []
+    for spk in spks:
+        project = Project.query.get(spk.project_id) if spk.project_id else None
+        rows.append({
+            "spk_id": spk.id,
+            "project_nama": project.nama if project else "—",
+            "project_id": spk.project_id,
+            "nomor": spk.spk_number,
+            "tanggal_terbit": spk.tanggal_terbit.isoformat() if spk.tanggal_terbit else None,
+            "nilai": spk.final_contract,
+            "rap_item_uraian": (spk.rap_item.uraian_baku if spk.rap_item
+                                else spk.work_description or ""),
+            "lead_time_hari": spk.lead_time_days,
+            "status": spk.status,
+        })
+    return jsonify({"vendor": vendor.to_dict(), "spks": rows})
+
+
+@app.route("/vendors/<int:vendor_id>")
+@login_required
+def vendor_history_view(vendor_id):
+    vendor = Vendor.query.get_or_404(vendor_id)
+    return render_template("vendor_history.html", vendor=vendor)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=config.PORT, debug=False)
