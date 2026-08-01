@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 import config
 from models import db, Subcon, SPK, Payment, AuditLog
 from parsers.sertifikat import parse_sertifikat
+from werkzeug.security import check_password_hash
 
 # ── APP SETUP ────────────────────────────────────────────────
 app = Flask(__name__)
@@ -36,6 +37,16 @@ with app.app_context():
 
 
 # ── AUTH HELPERS ─────────────────────────────────────────────
+def _verify_password(stored, plain):
+    """Verifikasi password — dukung hash werkzeug dan plaintext legacy."""
+    if stored and stored.startswith(("scrypt:", "pbkdf2:", "sha256:")):
+        try:
+            return check_password_hash(stored, plain)
+        except ValueError:
+            return False
+    return stored == plain
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -108,7 +119,7 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user_data = config.USERS.get(username)
-        if user_data and user_data["password"] == password:
+        if user_data and _verify_password(user_data["password"], password):
             session["user"] = username
             audit("login")
             db.session.commit()
