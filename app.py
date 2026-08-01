@@ -336,7 +336,8 @@ def add_spk(subcon_id):
     contract = float(request.form.get("contract_value", 0) or 0)
     ret_pct = float(request.form.get("retention_pct", config.DEFAULT_RETENTION_PCT) or config.DEFAULT_RETENTION_PCT)
     ret_date_raw = request.form.get("retention_release_date", "").strip()
-    alokasi = request.form.get("alokasi_biaya", "rap_item")
+    # Default None = "belum dialokasikan" — bisa diatur belakangan via tombol 'atur'
+    alokasi = request.form.get("alokasi_biaya") or None
 
     if not spk_number:
         flash("Nomor SPK/PO tidak boleh kosong.", "danger")
@@ -469,7 +470,7 @@ def upload_preview():
                 if spk is None:
                     spk = SPK(
                         vendor_id=vendor.id, project_id=project.id,
-                        spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
+                        spk_number=spk_number, jenis="SPK", alokasi_biaya=None,
                         work_description=pd.get("work_desc", ""),
                         contract_value=pd.get("contract_value", 0),
                         retention_pct=pd.get("retention_pct", config.DEFAULT_RETENTION_PCT),
@@ -504,7 +505,7 @@ def upload_preview():
                     if spk is None:
                         spk = SPK(
                             vendor_id=vendor.id, project_id=project.id,
-                            spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
+                            spk_number=spk_number, jenis="SPK", alokasi_biaya=None,
                             work_description=pd.get("work_desc", ""),
                             contract_value=pd.get("contract_value", 0),
                             retention_pct=pd.get("retention_pct", config.DEFAULT_RETENTION_PCT),
@@ -683,7 +684,7 @@ def manual_input():
             if not spk_number:
                 flash("Nomor SPK/PO tidak boleh kosong.", "danger")
                 return render_template("manual_input.html", subcons=subcons_list)
-            alokasi = request.form.get("alokasi_biaya", "rap_item")
+            alokasi = request.form.get("alokasi_biaya") or None
             form_data = {
                 "rap_item_id": request.form.get("rap_item_id") or None,
                 "prelim_item_id": None,
@@ -1118,6 +1119,42 @@ def api_spk_status(spk_id):
     db.session.commit()
     return jsonify({"spk_id": spk.id, "status": new_status,
                     "log": log.to_dict(), "lead_time_days": spk.lead_time_days})
+
+
+@app.route("/api/spks/<int:spk_id>", methods=["PATCH"])
+@admin_required
+def api_spk_update(spk_id):
+    """Edit SPK — utk mengisi alokasi belakangan (SPK dari parser sertifikat)."""
+    spk = SPK.query.get_or_404(spk_id)
+    data = request.get_json(force=True) or {}
+    alokasi = data.get("alokasi_biaya")
+    if alokasi is not None:
+        # None = "belum dialokasikan"; "" kosong dianggap None
+        if alokasi == "":
+            alokasi = None
+        if alokasi not in (None, "rap_item", "prelim", "variation", "rework", "proyek_lain"):
+            return jsonify({"error": "alokasi_biaya tidak valid"}), 400
+        alloc_data = {
+            "rap_item_id": data.get("rap_item_id"),
+            "prelim_item_id": data.get("prelim_item_id"),
+            "variation_id": data.get("variation_id"),
+        }
+        err = _validate_allocation(alokasi, alloc_data)
+        if err:
+            return jsonify({"error": err}), 400
+        spk.alokasi_biaya = alokasi
+        spk.rap_item_id = alloc_data["rap_item_id"]
+        spk.prelim_item_id = alloc_data["prelim_item_id"]
+        spk.variation_id = alloc_data["variation_id"]
+        _sync_rap_kode(spk)
+    for k in ("spk_number", "work_description", "jenis"):
+        if k in data:
+            setattr(spk, k, data[k])
+    audit("update_spk", "spk", spk.id,
+          f"alokasi={spk.alokasi_biaya or 'belum'}, rap_kode={spk.rap_kode or '—'}")
+    db.session.commit()
+    return jsonify({"spk_id": spk.id, "alokasi_biaya": spk.alokasi_biaya,
+                    "rap_item_id": spk.rap_item_id, "rap_kode": spk.rap_kode})
 
 
 # ── VARIATIONS ──────────────────────────────────────────────

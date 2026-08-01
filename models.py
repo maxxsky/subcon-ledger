@@ -155,7 +155,12 @@ class SPK(db.Model):
     tanggal_terbit = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), default="aktif")
     # alokasi_biaya wajib diisi di level aplikasi, tanpa opsi "lain-lain"
-    alokasi_biaya = db.Column(db.String(20), default="rap_item")   # rap_item|prelim|variation|rework|proyek_lain
+    # alokasi_biaya wajib diisi di level aplikasi, tanpa opsi "lain-lain".
+    # TANPA default — None = "belum dialokasikan" (contoh: SPK hasil parser sertifikat).
+    # Penting: kalau kolom punya default="rap_item", nilai None eksplisit akan
+    # di-override jadi "rap_item" oleh SQLAlchemy — celah yang bikin SPK parser
+    # mengaku rap_item padahal tidak menunjuk rap_item manapun.
+    alokasi_biaya = db.Column(db.String(20))   # rap_item|prelim|variation|rework|proyek_lain|None
 
     spk_number = db.Column(db.String(200), default="")
     work_description = db.Column(db.String(500), default="")

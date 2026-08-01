@@ -62,7 +62,12 @@
         {% for spk in subcon.spks|sort(attribute='spk_number') %}{% set ws=spk.segments %}
         <tr class="click spkrow" data-tgt="p{{ spk.id }}" style="font-size:11px">
           <td style="width:20px;padding-right:0"><span class="row-toggle">›</span></td>
-          <td style="min-width:190px"><span style="font-weight:500">{{ spk.spk_number[:45] }}</span><br><span style="font-size:10px;color:var(--ink-3)">{{ spk.work_description[:40] or '—' }}</span></td>
+          <td style="min-width:190px">
+            <span style="font-weight:500">{{ spk.spk_number[:45] }}</span>
+            {% if spk.alokasi_biaya is none %}<span class="chip chip-alert" style="font-size:9px" title="SPK dari parser sertifikat — belum dialokasikan ke RAP">⚠ perlu dialokasikan</span>
+            {% if current_role=='admin' %}<button class="btn btn-sm btn-ghost" style="font-size:9px;padding:1px 6px" onclick="event.stopPropagation();allocSpk({{ spk.id }}, '{{ spk.spk_number[:20] }}')">atur</button>{% endif %}
+            {% endif %}
+            <br><span style="font-size:10px;color:var(--ink-3)">{{ spk.work_description[:40] or '—' }}</span></td>
           <td class="r num">{{ spk.contract_value|money }}</td>
           <td class="r num" style="color:{{ 'var(--alert)' if spk.total_reductions else 'var(--ink-3)' }}">{% if spk.total_additions %}+{{ spk.total_additions|money }}{% elif spk.total_reductions %}-{{ spk.total_reductions|money }}{% else %}—{% endif %}</td>
           <td class="r num">{{ spk.final_contract|money }}</td>
@@ -114,5 +119,31 @@
 document.querySelectorAll('tr.spkrow').forEach(r=>r.addEventListener('click',()=>{
   document.getElementById(r.dataset.tgt).classList.toggle('show'); r.classList.toggle('open');
 }));
+
+async function allocSpk(spkId, nomor) {
+  const alokasi = prompt(`Alokasi SPK ${nomor}:\nrap_item / prelim / variation / rework / proyek_lain\n(kosong = batalkan)`, 'rap_item');
+  if (alokasi === null) return;
+  const al = alokasi.trim().toLowerCase() || '';
+  let rap_item_id = null, prelim_item_id = null, variation_id = null;
+  if (al === 'rap_item') {
+    rap_item_id = prompt('ID rap_item (bisa dilihat di halaman RAP):');
+    if (!rap_item_id) { alert('rap_item_id wajib utk alokasi rap_item'); return; }
+    rap_item_id = parseInt(rap_item_id);
+  } else if (al === 'prelim') {
+    prelim_item_id = prompt('ID prelim_item:');
+    if (!prelim_item_id) { alert('prelim_item_id wajib utk alokasi prelim'); return; }
+    prelim_item_id = parseInt(prelim_item_id);
+  } else if (al === 'variation') {
+    variation_id = prompt('ID variation:');
+    if (!variation_id) { alert('variation_id wajib utk alokasi variation'); return; }
+    variation_id = parseInt(variation_id);
+  }
+  const res = await fetch(`/api/spks/${spkId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({alokasi_biaya: al, rap_item_id, prelim_item_id, variation_id})
+  });
+  if (res.ok) { location.reload(); }
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+}
 </script>
 {% endblock %}
