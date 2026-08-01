@@ -69,7 +69,9 @@
           <td class="r num">{{ l.forecast_cost_to_complete|money }}</td>
           <td><span class="chip chip-mute" style="font-size:9px">{{ l.metode_ctc or '—' }}</span></td>
           <td class="r num" style="font-weight:600">{{ l.forecast_final_cost|money }}</td>
-          <td class="r num" style="font-weight:600">{{ l.forecast_final_value|money }}</td>
+          <td class="r num" style="font-weight:600;color:{{ 'var(--warn, #e6a817)' if period.status=='draft' and l.forecast_final_value == l.value_internal else 'var(--ink)' }}">
+            {{ l.forecast_final_value|money }}{% if period.status=='draft' and l.forecast_final_value == l.value_internal %} <span title="Belum ditinjau — sama dengan value_internal">⚠</span>{% endif %}
+          </td>
         </tr>
         <tr class="subrow show" id="cvr{{ l.id }}" style="font-size:11px">
           <td colspan="11" style="padding:2px 12px 8px">

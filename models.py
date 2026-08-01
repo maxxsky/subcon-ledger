@@ -551,7 +551,10 @@ class RapItem(db.Model):
 
     @property
     def flexed_budget(self):
-        return self.hsat_rap * self.vol_aktual
+        # Fase 7: vol_aktual belum punya sumber data — flexed_budget TIDAK ditampilkan
+        # di view manapun sampai ada volume aktual dari lapangan (angka yang selalu
+        # sama dengan baseline lebih menyesatkan daripada tidak ada).
+        return None
 
     @property
     def tersertifikasi(self):
@@ -601,7 +604,6 @@ class RapItem(db.Model):
             "terikat": self.terikat,
             "sisa_budget": self.sisa_budget,
             "buying_gain": self.buying_gain,
-            "flexed_budget": self.flexed_budget,
             "tersertifikasi": self.tersertifikasi,
             "terbayar": self.terbayar,
             "value_internal": self.value_internal,

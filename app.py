@@ -1289,7 +1289,10 @@ def api_cvr_generate(project_id):
             forecast_cost_to_complete=0,   # manual — judgment manusia
             metode_ctc="",                  # manual
             forecast_final_cost=it.terbayar + float(accrual_sum or 0),  # + CTC (0 utk draft baru)
-            forecast_final_value=it.value_internal + max(it.terikat - it.value_internal, 0),
+            # Fase 7: JANGAN campur cost ke value. terikat = biaya (SPK ke vendor),
+            # value = pendapatan (bisa ditagih ke owner). Nilai ini titik awal saja,
+            # harus ditinjau user sebelum finalize.
+            forecast_final_value=it.value_internal,
         )
         db.session.add(line)
     audit("generate_cvr", "cvr_period", period.id, f"periode={periode}, draft")
