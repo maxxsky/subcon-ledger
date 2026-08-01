@@ -13,7 +13,7 @@ Jalankan: venv/bin/python scripts/seed_dummy.py
 """
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_DB = os.path.join(BASE, "data", "subcon_test.db")
@@ -27,7 +27,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from models import (db, Project, BOQItem, RapVersion, RapItem,
-                    RiskAllowance, PrelimItem, Vendor, SPK, Certificate, Payment)
+                    RiskAllowance, PrelimItem, Vendor, SPK, Certificate, Payment,
+                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation)
 
 engine = create_engine(f"sqlite:///{TEST_DB}")
 db.metadata.create_all(engine)
@@ -37,6 +38,10 @@ s = Session()
 
 def d(x):
     return date.fromisoformat(x) if x else None
+
+
+def dt(x):
+    return datetime.fromisoformat(x) if x else None
 
 
 def main():
@@ -186,6 +191,82 @@ def main():
         Payment(id=3, spk_id=2, certificate_id=2, amount=149550000, date=d("2026-07-02"), is_dp=False),
     ])
 
+    # ── procurement_requests + price_comparisons (Fase 3) ──
+    s.add_all([
+        ProcurementRequest(id=1, project_id=1, rap_item_id=102, nomor="PR-2026-001",
+                           tanggal_ajukan=d("2026-04-02"), nilai_ajukan=477405000,
+                           vendor_terpilih_id=1, status="terbit"),
+        ProcurementRequest(id=2, project_id=1, rap_item_id=106, nomor="PR-2026-002",
+                           tanggal_ajukan=d("2026-04-15"), nilai_ajukan=300000000,
+                           vendor_terpilih_id=3, status="terbit"),
+    ])
+    s.add_all([
+        PriceComparison(id=1, procurement_request_id=1, vendor_id=1, harga=1030000,
+                        lingkup_termasuk="Material + antar lokasi", lingkup_tidak_termasuk="Pompa beton",
+                        terpilih=True, alasan_tidak_dipilih=""),
+        PriceComparison(id=2, procurement_request_id=1, vendor_id=99, harga=995000,
+                        lingkup_termasuk="Material saja",
+                        lingkup_tidak_termasuk="Antar lokasi, pompa beton",
+                        terpilih=False,
+                        alasan_tidak_dipilih="Lebih murah tapi tidak termasuk ongkos antar — total efektif lebih mahal dari V-001"),
+        PriceComparison(id=3, procurement_request_id=2, vendor_id=3, harga=300000000,
+                        lingkup_termasuk="Material + upah + alat bantu",
+                        lingkup_tidak_termasuk="Scaffolding", terpilih=True, alasan_tidak_dipilih=""),
+    ])
+
+    # ── SPK-004 (variation — tabel variations sudah ada di Fase 3) ──
+    s.add(SPK(id=4, project_id=1, vendor_id=4, rap_item_id=None, variation_id=1,
+              spk_number="SPK-004/NRC-SBW/2026", jenis="PO",
+              work_description="Waterproofing tambahan area talang (CCO-01)",
+              contract_value=28000000, tanggal_terbit=d("2026-06-05"), status="aktif",
+              alokasi_biaya="variation"))
+
+    # ── spk_status_logs (Fase 3) — lead time SPK-001 6 hari, SPK-002 21 hari ──
+    s.add_all([
+        SpkStatusLog(id=1, spk_id=1, status="diajukan", timestamp=dt("2026-04-02T09:00:00"), user="Brahma"),
+        SpkStatusLog(id=2, spk_id=1, status="review_pusat", timestamp=dt("2026-04-03T10:00:00"), user="system"),
+        SpkStatusLog(id=3, spk_id=1, status="terbit", timestamp=dt("2026-04-08T14:00:00"), user="Pusat"),
+        SpkStatusLog(id=4, spk_id=2, status="diajukan", timestamp=dt("2026-04-15T09:00:00"), user="Brahma"),
+        SpkStatusLog(id=5, spk_id=2, status="review_pusat", timestamp=dt("2026-04-16T09:00:00"), user="system"),
+        SpkStatusLog(id=6, spk_id=2, status="terbit", timestamp=dt("2026-05-06T11:00:00"), user="Pusat"),
+    ])
+
+    # ── variations (Fase 3) ──
+    s.add_all([
+        Variation(id=1, project_id=1, nomor="VAR-001", rap_item_id=107,
+                  sumber="revisi_gambar", tanggal_peristiwa=d("2026-05-20"),
+                  tanggal_notice=d("2026-05-20"), batas_notice=d("2026-06-03"),
+                  uraian="Penambahan waterproofing area talang sesuai revisi gambar Ars-14",
+                  estimasi_biaya=28000000, nilai_klaim_value=28000000,
+                  dampak_waktu_hari=0, status_entitlement="disetujui", cco_ref="CCO-01"),
+        Variation(id=2, project_id=1, nomor="VAR-002", rap_item_id=None,
+                  sumber="delay_owner", tanggal_peristiwa=d("2026-06-10"),
+                  tanggal_notice=d("2026-06-11"), batas_notice=d("2026-06-24"),
+                  uraian="Keterlambatan approval shop drawing MEP oleh MK",
+                  estimasi_biaya=90000000, nilai_klaim_value=None,
+                  dampak_waktu_hari=30, status_entitlement="diajukan", cco_ref=None),
+        Variation(id=3, project_id=1, nomor="VAR-003", rap_item_id=103,
+                  sumber="instruksi", tanggal_peristiwa=d("2026-07-25"),
+                  tanggal_notice=d("2026-07-26"), batas_notice=d("2026-08-02"),
+                  uraian="Instruksi tambah besi D16 area balkon (belum ada gambar resmi)",
+                  estimasi_biaya=15000000, nilai_klaim_value=None,
+                  dampak_waktu_hari=0, status_entitlement="notice_terkirim", cco_ref=None,
+                  catatan="Batas notice 2026-08-02 — uji alert H-3 jika cutoff CVR ~2026-07-30"),
+        Variation(id=4, project_id=1, nomor=None, rap_item_id=None,
+                  sumber="revisi_spek", tanggal_peristiwa=d("2026-07-15"),
+                  tanggal_notice=None, batas_notice=None,
+                  uraian="Kemungkinan perubahan spek keramik toilet — belum ada instruksi resmi",
+                  estimasi_biaya=22000000, nilai_klaim_value=None,
+                  dampak_waktu_hari=None, status_entitlement="anticipated", cco_ref=None),
+        Variation(id=5, project_id=1, nomor="VAR-005", rap_item_id=106,
+                  sumber="instruksi", tanggal_peristiwa=d("2026-06-15"),
+                  tanggal_notice=d("2026-06-16"), batas_notice=d("2026-06-30"),
+                  uraian="Klaim tambahan biaya scaffolding oleh subkon bekisting — ditolak owner",
+                  estimasi_biaya=18000000, nilai_klaim_value=18000000,
+                  dampak_waktu_hari=0, status_entitlement="disputed", cco_ref=None,
+                  catatan="Tetap masuk cost di CVR meski disputed — lihat metode §3 & §7"),
+    ])
+
     s.commit()
     print("Seed dummy selesai →", TEST_DB)
     print(f"  projects={s.query(Project).count()} boq={s.query(BOQItem).count()} "
@@ -193,6 +274,8 @@ def main():
           f"risks={s.query(RiskAllowance).count()} prelims={s.query(PrelimItem).count()}")
     print(f"  vendors={s.query(Vendor).count()} spks={s.query(SPK).count()} "
           f"certs={s.query(Certificate).count()} payments={s.query(Payment).count()}")
+    print(f"  procurement={s.query(ProcurementRequest).count()} comparisons={s.query(PriceComparison).count()} "
+          f"status_logs={s.query(SpkStatusLog).count()} variations={s.query(Variation).count()}")
 
 
 if __name__ == "__main__":

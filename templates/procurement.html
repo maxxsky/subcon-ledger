@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Pengadaan — {{ project.nama }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/projects">← Proyek</a>
+    <h1 class="page" style="margin-top:8px">Pipeline Pengadaan — {{ project.nama }}</h1>
+  </div>
+  {% if current_role=='admin' %}
+  <button class="btn btn-primary" id="btnNewPR">+ Permintaan Pengadaan</button>
+  {% endif %}
+</div>
+
+<div id="prForm" class="hide card" style="margin-bottom:18px">
+  <div class="card-h"><div class="t">Buat Permintaan Pengadaan</div></div>
+  <div class="card-b">
+    <form id="prCreateForm" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;align-items:end">
+      <div><label class="fld">Nomor</label><input class="inp" name="nomor" placeholder="PR-2026-001"></div>
+      <div><label class="fld">RAP item ID</label><input class="inp num" type="number" name="rap_item_id"></div>
+      <div><label class="fld">Tanggal ajukan</label><input class="inp" type="date" name="tanggal_ajukan"></div>
+      <div><label class="fld">Nilai ajukan</label><input class="inp num" type="number" name="nilai_ajukan"></div>
+      <div><label class="fld">Vendor terpilih ID</label><input class="inp num" type="number" name="vendor_terpilih_id"></div>
+      <div style="grid-column:span 2"><label class="fld">Catatan</label><input class="inp" name="catatan"></div>
+      <div><button class="btn btn-primary btn-block" type="submit">Simpan</button></div>
+    </form>
+  </div>
+</div>
+
+{% set statuses = ['draft','proses','terbit','dibatalkan'] %}
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:start">
+{% for st in statuses %}
+{% set col_prs = prs|selectattr('status','equalto',st)|list %}
+<div class="card" style="background:var(--surface-2)">
+  <div class="card-h" style="padding:10px 12px">
+    <div class="t" style="font-size:12.5px">{{ st|upper }} <span class="chip chip-mute">{{ col_prs|length }}</span></div>
+  </div>
+  <div style="padding:8px;display:grid;gap:8px;min-height:120px">
+    {% for pr in col_prs %}
+    <div class="card" style="margin:0;background:var(--surface);border:1px solid var(--line-2)">
+      <div class="card-b" style="padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b style="font-size:12.5px">{{ pr.nomor or ('PR#' ~ pr.id) }}</b>
+          {% if pr.lead_time_days is not none %}<span class="num" style="font-size:10px;color:var(--ink-3)">LT {{ pr.lead_time_days }}h</span>{% endif %}
+        </div>
+        <div style="font-size:11px;color:var(--ink-2);margin-top:4px">
+          Rp {{ pr.nilai_ajukan|money }} · {% if pr.rap_item_id %}RAP #{{ pr.rap_item_id }}{% else %}—{% endif %}
+        </div>
+        {% if pr.comparisons %}
+        <div style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px">
+          {% for c in pr.comparisons %}
+          <div style="font-size:10.5px;display:flex;justify-content:space-between">
+            <span>V-{{ c.vendor_id or '?' }} <span style="color:{{ 'var(--paid)' if c.terpilih else 'var(--ink-3)' }}">{{ '✓' if c.terpilih else '' }}</span></span>
+            <span class="num">Rp {{ c.harga|money }}</span>
+          </div>
+          {% if c.alasan_tidak_dipilih %}<div style="font-size:9.5px;color:var(--ink-3);font-style:italic;margin-top:2px">✗ {{ c.alasan_tidak_dipilih }}</div>{% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if current_role=='admin' and pr.status != 'dibatalkan' %}
+        <div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
+          {% set next_st = {'draft':'proses','proses':'terbit','terbit':'selesai'}[pr.status] if pr.status in ['draft','proses','terbit'] else None %}
+          {% if next_st %}
+          <button class="btn btn-sm btn-ghost" onclick="advancePR({{ pr.id }}, '{{ next_st }}')">→ {{ next_st }}</button>
+          {% endif %}
+          {% if pr.status != 'dibatalkan' %}
+          <button class="btn btn-sm btn-ghost" style="color:var(--alert)" onclick="advancePR({{ pr.id }}, 'dibatalkan')">batal</button>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div style="color:var(--ink-3);font-size:11px;text-align:center;padding:16px 0">kosong</div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const projectId = {{ project.id }};
+
+document.getElementById('btnNewPR')?.addEventListener('click', () => {
+  document.getElementById('prForm').classList.toggle('hide');
+});
+
+document.getElementById('prCreateForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    project_id: projectId,
+    nomor: f.nomor.value.trim(),
+    rap_item_id: f.rap_item_id.value ? parseInt(f.rap_item_id.value) : null,
+    tanggal_ajukan: f.tanggal_ajukan.value,
+    nilai_ajukan: parseFloat(f.nilai_ajukan.value) || 0,
+    vendor_terpilih_id: f.vendor_terpilih_id.value ? parseInt(f.vendor_terpilih_id.value) : null,
+    catatan: f.catatan.value.trim(),
+  };
+  const res = await fetch('/api/procurement-requests', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+});
+
+async function advancePR(id, status) {
+  const res = await fetch(`/api/procurement-requests/${id}/status`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status})
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+}
+</script>
+{% endblock %}

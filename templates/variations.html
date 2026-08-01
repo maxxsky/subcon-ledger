@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Register Variation — {{ project.nama }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <a class="back" href="/projects">← Proyek</a>
+    <h1 class="page" style="margin-top:8px">Register Variation — {{ project.nama }}</h1>
+    <div class="num" style="font-size:12px;color:var(--ink-3);margin-top:4px">{{ variations|length }} variation</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <select class="inp" style="width:auto" onchange="if(this.value)location.href='/projects/{{ project.id }}/variations?status='+this.value;else location.href='/projects/{{ project.id }}/variations'">
+      <option value="">Semua status</option>
+      {% for st in ['anticipated','notice_terkirim','diajukan','disetujui','ditolak','disputed'] %}
+      <option value="{{ st }}" {% if status_filter==st %}selected{% endif %}>{{ st }}</option>
+      {% endfor %}
+    </select>
+    {% if current_role=='admin' %}<button class="btn btn-primary" id="btnNewVar">+ Variation</button>{% endif %}
+  </div>
+</div>
+
+{% if due_soon %}
+<div class="flash flash-warning" style="margin-bottom:16px">
+  <div><strong>⚠️ H-3 NOTICE DEADLINE:</strong>
+  {% for v in due_soon %}
+    {{ v.nomor or ('VAR#' ~ v.id) }} ({{ v.batas_notice }}, sisa {{ (v.batas_notice - today).days }} hari){{ '' if loop.last else ' · ' }}
+  {% endfor %}
+  — batas notice ≤ 3 hari! Segera kirim notice resmi.</div>
+</div>
+{% endif %}
+
+<div id="varForm" class="hide card" style="margin-bottom:18px">
+  <div class="card-h"><div class="t">Buat Variation</div></div>
+  <div class="card-b">
+    <form id="varCreateForm" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;align-items:end">
+      <div><label class="fld">Nomor</label><input class="inp" name="nomor" placeholder="VAR-006"></div>
+      <div><label class="fld">Sumber</label>
+        <select class="inp" name="sumber">
+          <option>instruksi</option><option>revisi_gambar</option><option>revisi_spek</option><option>delay_owner</option>
+        </select>
+      </div>
+      <div><label class="fld">RAP item ID</label><input class="inp num" type="number" name="rap_item_id"></div>
+      <div><label class="fld">Tgl peristiwa</label><input class="inp" type="date" name="tanggal_peristiwa"></div>
+      <div><label class="fld">Tgl notice</label><input class="inp" type="date" name="tanggal_notice"></div>
+      <div><label class="fld">Batas notice</label><input class="inp" type="date" name="batas_notice"></div>
+      <div><label class="fld">Estimasi biaya</label><input class="inp num" type="number" name="estimasi_biaya"></div>
+      <div><label class="fld">Status entitlement</label>
+        <select class="inp" name="status_entitlement">
+          <option>anticipated</option><option>notice_terkirim</option><option>diajukan</option>
+          <option>disetujui</option><option>ditolak</option><option>disputed</option>
+        </select>
+      </div>
+      <div><label class="fld">Dampak (hari)</label><input class="inp num" type="number" name="dampak_waktu_hari"></div>
+      <div><label class="fld">CCO ref</label><input class="inp" name="cco_ref"></div>
+      <div style="grid-column:span 4"><label class="fld">Uraian</label><input class="inp" name="uraian" placeholder="Deskripsi singkat perubahan"></div>
+      <div><button class="btn btn-primary btn-block" type="submit">Simpan</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap">
+      <thead><tr>
+        <th>Nomor</th><th style="min-width:200px">Uraian</th><th>Status</th><th>Sumber</th>
+        <th class="r">Estimasi</th><th class="r">Klaim</th><th>Batas Notice</th><th>Dampak</th><th>CCO</th>
+      </tr></thead>
+      <tbody>
+        {% for v in variations %}
+        {% set days_left = (v.batas_notice - today).days if v.batas_notice else None %}
+        <tr style="font-size:12px;{{ 'background:var(--alert-soft, #fff3e0)' if days_left is not none and days_left <= 3 else '' }}">
+          <td style="font-weight:600">{{ v.nomor or '—' }}</td>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis">{{ v.uraian }}</td>
+          <td>
+            <span class="chip {{ 'chip-alert' if v.status_entitlement=='disputed' else 'chip-accent' if v.status_entitlement=='disetujui' else 'chip-mute' }}">{{ v.status_entitlement }}</span>
+            {% if v.status_entitlement == 'disputed' %}<div style="font-size:9px;color:var(--ink-3)">tetap dihitung cost</div>{% endif %}
+          </td>
+          <td style="font-size:11px;color:var(--ink-2)">{{ v.sumber }}</td>
+          <td class="r num">{{ v.estimasi_biaya|money }}</td>
+          <td class="r num">{{ (v.nilai_klaim_value|money) if v.nilai_klaim_value is not none else '—' }}</td>
+          <td class="num" style="color:{{ 'var(--alert)' if days_left is not none and days_left <= 3 else 'var(--ink-2)' }}">
+            {{ v.batas_notice or '—' }}
+            {% if days_left is not none %}<br><span style="font-size:9px">{{ '⚠ ' if days_left <= 3 else '' }}{{ days_left }} hari</span>{% endif %}
+          </td>
+          <td class="num">{{ (v.dampak_waktu_hari ~ 'h') if v.dampak_waktu_hari is not none else '—' }}</td>
+          <td class="num" style="font-size:11px">{{ v.cco_ref or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada variation.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const projectId = {{ project.id }};
+
+document.getElementById('btnNewVar')?.addEventListener('click', () => {
+  document.getElementById('varForm').classList.toggle('hide');
+});
+
+document.getElementById('varCreateForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    project_id: projectId,
+    nomor: f.nomor.value.trim() || null,
+    rap_item_id: f.rap_item_id.value ? parseInt(f.rap_item_id.value) : null,
+    sumber: f.sumber.value,
+    tanggal_peristiwa: f.tanggal_peristiwa.value || null,
+    tanggal_notice: f.tanggal_notice.value || null,
+    batas_notice: f.batas_notice.value || null,
+    uraian: f.uraian.value.trim(),
+    estimasi_biaya: parseFloat(f.estimasi_biaya.value) || 0,
+    status_entitlement: f.status_entitlement.value,
+    dampak_waktu_hari: f.dampak_waktu_hari.value ? parseInt(f.dampak_waktu_hari.value) : null,
+    cco_ref: f.cco_ref.value.trim() || null,
+  };
+  const res = await fetch('/api/variations', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) location.reload();
+  else { const d = await res.json(); alert(d.error || 'Gagal'); }
+});
+</script>
+{% endblock %}

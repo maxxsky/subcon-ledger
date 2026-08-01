@@ -6,7 +6,7 @@ import os
 import json
 import shutil
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect, url_for,
@@ -15,7 +15,8 @@ from werkzeug.utils import secure_filename
 
 import config
 from models import (db, Vendor, Project, SPK, Certificate, Payment, AuditLog,
-                    BOQItem, RapVersion, RapItem, RiskAllowance, PrelimItem)
+                    BOQItem, RapVersion, RapItem, RiskAllowance, PrelimItem,
+                    ProcurementRequest, PriceComparison, SpkStatusLog, Variation)
 from parsers.sertifikat import parse_sertifikat
 from werkzeug.security import check_password_hash
 
@@ -960,6 +961,206 @@ def rap_export(project_id):
     path = generate_rap_excel(project, version)
     return send_file(path, as_attachment=True,
                      download_name=f"RAP_{project.nama[:20]}_{version.versi}.xlsx")
+
+
+# ── PROCUREMENT REQUESTS ────────────────────────────────────
+SPK_STATUS_FLOW = ["draft", "diajukan", "review_pusat", "terbit", "aktif", "selesai"]
+PROCUREMENT_STATUS_FLOW = ["draft", "proses", "terbit", "dibatalkan"]
+
+
+def _validate_price_comparison(pr_id, data, errors):
+    """Validasi alasan_tidak_dipilih: wajib kalau lebih murah tapi tidak terpilih."""
+    terpilih = bool(data.get("terpilih", False))
+    harga = float(data.get("harga", 0) or 0)
+    if terpilih:
+        return
+    # Ada comparison terpilih lain yang lebih mahal dari yang ini?
+    others = PriceComparison.query.filter_by(procurement_request_id=pr_id, terpilih=True).all()
+    more_expensive = [c for c in others if c.harga > harga]
+    if more_expensive and not (data.get("alasan_tidak_dipilih") or "").strip():
+        errors.append("alasan_tidak_dipilih wajib diisi: pembanding lebih murah tapi tidak terpilih.")
+
+
+@app.route("/api/procurement-requests", methods=["POST"])
+@admin_required
+def api_procurement_requests():
+    data = request.get_json(force=True) or {}
+    project_id = data.get("project_id")
+    if not project_id:
+        return jsonify({"error": "project_id wajib"}), 400
+    pr = ProcurementRequest(
+        project_id=project_id,
+        rap_item_id=data.get("rap_item_id") or None,
+        nomor=data.get("nomor", ""),
+        tanggal_ajukan=_parse_date_str(data.get("tanggal_ajukan", "")),
+        nilai_ajukan=float(data.get("nilai_ajukan", 0) or 0),
+        vendor_terpilih_id=data.get("vendor_terpilih_id") or None,
+        status=data.get("status", "draft"),
+        catatan=data.get("catatan", ""))
+    db.session.add(pr)
+    db.session.flush()
+    audit("add_procurement_request", "procurement_request", pr.id,
+          f"nomor={pr.nomor}, nilai={pr.nilai_ajukan}")
+    db.session.commit()
+    return jsonify(pr.to_dict()), 201
+
+
+@app.route("/api/procurement-requests/<int:pr_id>/comparisons", methods=["POST"])
+@admin_required
+def api_procurement_comparisons(pr_id):
+    pr = ProcurementRequest.query.get_or_404(pr_id)
+    data = request.get_json(force=True) or {}
+    errors = []
+    _validate_price_comparison(pr_id, data, errors)
+    if errors:
+        return jsonify({"error": errors[0]}), 400
+    pc = PriceComparison(
+        procurement_request_id=pr_id,
+        vendor_id=data.get("vendor_id"),
+        harga=float(data.get("harga", 0) or 0),
+        lingkup_termasuk=data.get("lingkup_termasuk", ""),
+        lingkup_tidak_termasuk=data.get("lingkup_tidak_termasuk", ""),
+        terpilih=bool(data.get("terpilih", False)),
+        alasan_tidak_dipilih=data.get("alasan_tidak_dipilih", ""))
+    db.session.add(pc)
+    db.session.flush()
+    audit("add_price_comparison", "price_comparison", pc.id,
+          f"pr={pr.nomor}, vendor={pc.vendor_id}, harga={pc.harga}, terpilih={pc.terpilih}")
+    db.session.commit()
+    return jsonify(pc.to_dict()), 201
+
+
+@app.route("/api/procurement-requests/<int:pr_id>/status", methods=["PATCH"])
+@admin_required
+def api_procurement_status(pr_id):
+    pr = ProcurementRequest.query.get_or_404(pr_id)
+    data = request.get_json(force=True) or {}
+    new_status = data.get("status", "")
+    if new_status not in PROCUREMENT_STATUS_FLOW:
+        return jsonify({"error": f"status harus salah satu: {', '.join(PROCUREMENT_STATUS_FLOW)}"}), 400
+    old = pr.status
+    pr.status = new_status
+    audit("update_procurement_status", "procurement_request", pr.id,
+          f"{old} → {new_status}")
+    db.session.commit()
+    return jsonify(pr.to_dict())
+
+
+# ── SPK STATUS (tulis log baru) ─────────────────────────────
+@app.route("/api/spks/<int:spk_id>/status", methods=["PATCH"])
+@admin_required
+def api_spk_status(spk_id):
+    spk = SPK.query.get_or_404(spk_id)
+    data = request.get_json(force=True) or {}
+    new_status = data.get("status", "")
+    if new_status not in SPK_STATUS_FLOW:
+        return jsonify({"error": f"status harus salah satu: {', '.join(SPK_STATUS_FLOW)}"}), 400
+    log = SpkStatusLog(spk_id=spk.id, status=new_status,
+                       user=current_user(), catatan=data.get("catatan", ""))
+    db.session.add(log)
+    spk.status = new_status
+    audit("update_spk_status", "spk", spk.id,
+          f"→ {new_status} (log #{log.id})")
+    db.session.commit()
+    return jsonify({"spk_id": spk.id, "status": new_status,
+                    "log": log.to_dict(), "lead_time_days": spk.lead_time_days})
+
+
+# ── VARIATIONS ──────────────────────────────────────────────
+@app.route("/projects/<int:project_id>/variations")
+@login_required
+def variations_view(project_id):
+    project = Project.query.get_or_404(project_id)
+    session["project_id"] = project_id
+    status_filter = request.args.get("status", "")
+    q = Variation.query.filter_by(project_id=project_id)
+    if status_filter:
+        q = q.filter_by(status_entitlement=status_filter)
+    variations = q.order_by(Variation.batas_notice.is_(None),
+                            Variation.batas_notice.asc()).all()
+    today = date.today()
+    due_soon = [v for v in variations
+                if v.batas_notice and 0 <= (v.batas_notice - today).days <= 3]
+    return render_template("variations.html", project=project,
+                           variations=variations, due_soon=due_soon,
+                           status_filter=status_filter, today=today)
+
+
+@app.route("/api/variations", methods=["POST"])
+@admin_required
+def api_variations():
+    data = request.get_json(force=True) or {}
+    project_id = data.get("project_id")
+    if not project_id:
+        return jsonify({"error": "project_id wajib"}), 400
+    v = Variation(
+        project_id=project_id,
+        nomor=data.get("nomor"),
+        rap_item_id=data.get("rap_item_id") or None,
+        sumber=data.get("sumber", "instruksi"),
+        tanggal_peristiwa=_parse_date_str(data.get("tanggal_peristiwa", "")),
+        tanggal_notice=_parse_date_str(data.get("tanggal_notice", "")),
+        batas_notice=_parse_date_str(data.get("batas_notice", "")),
+        uraian=data.get("uraian", ""),
+        estimasi_biaya=float(data.get("estimasi_biaya", 0) or 0),
+        nilai_klaim_value=data.get("nilai_klaim_value"),
+        dampak_waktu_hari=data.get("dampak_waktu_hari"),
+        status_entitlement=data.get("status_entitlement", "diajukan"),
+        cco_ref=data.get("cco_ref"))
+    db.session.add(v)
+    db.session.flush()
+    audit("add_variation", "variation", v.id,
+          f"nomor={v.nomor or '—'}, status={v.status_entitlement}, estimasi={v.estimasi_biaya}")
+    db.session.commit()
+    return jsonify(v.to_dict()), 201
+
+
+@app.route("/api/projects/<int:project_id>/variations/due")
+@login_required
+def api_variations_due(project_id):
+    """Variation dengan batas_notice ≤3 hari dari hari ini — alert H-3."""
+    today = date.today()
+    cutoff = today + timedelta(days=3)
+    variations = Variation.query.filter(
+        Variation.project_id == project_id,
+        Variation.batas_notice.isnot(None),
+        Variation.batas_notice <= cutoff,
+    ).order_by(Variation.batas_notice.asc()).all()
+    return jsonify([v.to_dict() for v in variations])
+
+
+# ── LEAD TIME PUSAT ─────────────────────────────────────────
+@app.route("/api/projects/<int:project_id>/lead-time")
+@login_required
+def api_lead_time(project_id):
+    """Rata-rata + rentang (min-max) lead time per SPK dari status log."""
+    spks = SPK.query.filter_by(project_id=project_id).all()
+    leads = []
+    for spk in spks:
+        lt = spk.lead_time_days
+        if lt is not None:
+            leads.append({"spk_id": spk.id, "spk_number": spk.spk_number, "lead_time_days": lt})
+    if not leads:
+        return jsonify({"count": 0, "avg": None, "min": None, "max": None, "items": []})
+    avg = sum(x["lead_time_days"] for x in leads) / len(leads)
+    return jsonify({
+        "count": len(leads),
+        "avg": round(avg, 1),
+        "min": min(x["lead_time_days"] for x in leads),
+        "max": max(x["lead_time_days"] for x in leads),
+        "items": leads,
+    })
+
+
+# ── PROCUREMENT PIPELINE VIEW ───────────────────────────────
+@app.route("/projects/<int:project_id>/procurement")
+@login_required
+def procurement_view(project_id):
+    project = Project.query.get_or_404(project_id)
+    session["project_id"] = project_id
+    prs = ProcurementRequest.query.filter_by(project_id=project_id) \
+                                  .order_by(ProcurementRequest.id.desc()).all()
+    return render_template("procurement.html", project=project, prs=prs)
 
 
 if __name__ == "__main__":

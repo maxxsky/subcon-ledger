@@ -2,7 +2,7 @@
 Models — SQLAlchemy ORM untuk Subcon Ledger.
 Struktur: Project → Vendor → SPK/PO → Certificate → Payment
 """
-from datetime import datetime
+from datetime import datetime, date
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
@@ -147,9 +147,9 @@ class SPK(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_spks_project_id"), nullable=False)
     # Kolom FK fase berikutnya — int nullable sekarang, constraint ditambah saat tabel tujuan ada
     rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_spks_rap_item_id"), nullable=True)            # FK Fase 2
-    procurement_request_id = db.Column(db.Integer, nullable=True)  # FK Fase 3
+    procurement_request_id = db.Column(db.Integer, db.ForeignKey("procurement_requests.id", name="fk_spks_procurement_request_id"), nullable=True)  # FK Fase 3
     prelim_item_id = db.Column(db.Integer, db.ForeignKey("prelim_items.id", name="fk_spks_prelim_item_id"), nullable=True)      # FK Fase 2
-    variation_id = db.Column(db.Integer, nullable=True)            # FK Fase 3
+    variation_id = db.Column(db.Integer, db.ForeignKey("variations.id", name="fk_spks_variation_id"), nullable=True)            # FK Fase 3
     jenis = db.Column(db.String(10), default="SPK")                # "SPK" | "PO"
     tanggal_terbit = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), default="aktif")
@@ -169,6 +169,8 @@ class SPK(db.Model):
                                    cascade="all, delete-orphan", lazy=True)
     payments = db.relationship("Payment", backref="spk",
                                cascade="all, delete-orphan", lazy=True)
+    status_logs = db.relationship("SpkStatusLog", backref="spk",
+                                  cascade="all, delete-orphan", lazy=True)
 
     @property
     def total_paid(self):
@@ -263,6 +265,27 @@ class SPK(db.Model):
             return False
         delta = (self.retention_release_date - datetime.utcnow().date()).days
         return 0 <= delta <= RETENTION_ALERT_DAYS
+
+    @property
+    def lead_time_days(self):
+        """Hari dari diajukan → terbit, dari spk_status_logs (bukan kolom terpisah)."""
+        diajukan = None
+        terbit = None
+        for log in self.status_logs:
+            if log.status == "diajukan" and diajukan is None:
+                diajukan = log.timestamp
+            elif log.status == "terbit" and terbit is None:
+                terbit = log.timestamp
+        if diajukan and terbit:
+            return (terbit - diajukan).days
+        return None
+
+    @property
+    def current_status(self):
+        """Status terbaru dari log — bukan kolom status SPK itu sendiri."""
+        if not self.status_logs:
+            return self.status or "draft"
+        return self.status_logs[-1].status
 
     @property
     def segments(self):
@@ -614,4 +637,143 @@ class PrelimItem(db.Model):
             "durasi_rencana_bulan": self.durasi_rencana_bulan,
             "total": self.total,
             "terikat": self.terikat,
+        }
+
+
+class ProcurementRequest(db.Model):
+    """Permintaan pengadaan — sumber SPK/PO terbit."""
+    __tablename__ = "procurement_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_procurement_requests_project_id"), nullable=False)
+    rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_procurement_requests_rap_item_id"), nullable=True)
+    nomor = db.Column(db.String(100), default="")
+    tanggal_ajukan = db.Column(db.Date, nullable=True)
+    nilai_ajukan = db.Column(db.Float, default=0.0)
+    vendor_terpilih_id = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(30), default="draft")  # draft|proses|terbit|dibatalkan
+    catatan = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    comparisons = db.relationship("PriceComparison", backref="procurement_request",
+                                  cascade="all, delete-orphan", lazy=True)
+
+    @property
+    def lead_time_days(self):
+        """Hari dari diajukan → terbit (via SPK status log jika ada)."""
+        if self.tanggal_ajukan:
+            spk = SPK.query.filter_by(procurement_request_id=self.id).first()
+            if spk:
+                lt = spk.lead_time_days
+                if lt is not None:
+                    return lt
+            return (date.today() - self.tanggal_ajukan).days
+        return None
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "rap_item_id": self.rap_item_id,
+            "nomor": self.nomor,
+            "tanggal_ajukan": self.tanggal_ajukan.isoformat() if self.tanggal_ajukan else None,
+            "nilai_ajukan": self.nilai_ajukan,
+            "vendor_terpilih_id": self.vendor_terpilih_id,
+            "status": self.status,
+            "catatan": self.catatan,
+            "lead_time_days": self.lead_time_days,
+        }
+
+
+class PriceComparison(db.Model):
+    """Pembanding harga pengadaan. alasan_tidak_dipilih WAJIB kalau lebih murah tapi tidak terpilih."""
+    __tablename__ = "price_comparisons"
+
+    id = db.Column(db.Integer, primary_key=True)
+    procurement_request_id = db.Column(db.Integer, db.ForeignKey("procurement_requests.id", name="fk_price_comparisons_procurement_request_id"), nullable=False)
+    vendor_id = db.Column(db.Integer, nullable=True)  # nullable — vendor pembanding bisa tidak terdaftar (contoh vendor_id 99)
+    harga = db.Column(db.Float, default=0.0)
+    lingkup_termasuk = db.Column(db.String(300), default="")
+    lingkup_tidak_termasuk = db.Column(db.String(300), default="")
+    terpilih = db.Column(db.Boolean, default=False)
+    alasan_tidak_dipilih = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "procurement_request_id": self.procurement_request_id,
+            "vendor_id": self.vendor_id,
+            "harga": self.harga,
+            "lingkup_termasuk": self.lingkup_termasuk,
+            "lingkup_tidak_termasuk": self.lingkup_tidak_termasuk,
+            "terpilih": self.terpilih,
+            "alasan_tidak_dipilih": self.alasan_tidak_dipilih,
+        }
+
+
+class SpkStatusLog(db.Model):
+    """Riwayat status SPK — tiap perubahan = baris baru, bukan menimpa.
+    Flow: draft → diajukan → review_pusat → terbit → aktif → selesai"""
+    __tablename__ = "spk_status_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    spk_id = db.Column(db.Integer, db.ForeignKey("spks.id", name="fk_spk_status_logs_spk_id"), nullable=False)
+    status = db.Column(db.String(30), default="draft")
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    user = db.Column(db.String(50), default="")
+    catatan = db.Column(db.String(300), default="")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "spk_id": self.spk_id,
+            "status": self.status,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "user": self.user,
+            "catatan": self.catatan,
+        }
+
+
+class Variation(db.Model):
+    """Register variation order — disputed tetap dihitung sebagai cost."""
+    __tablename__ = "variations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_variations_project_id"), nullable=False)
+    nomor = db.Column(db.String(50), nullable=True)   # nullable — VAR-004 anticipated tanpa nomor
+    rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_variations_rap_item_id"), nullable=True)
+    sumber = db.Column(db.String(30), default="instruksi")  # instruksi|revisi_gambar|revisi_spek|delay_owner
+    tanggal_peristiwa = db.Column(db.Date, nullable=True)
+    tanggal_notice = db.Column(db.Date, nullable=True)
+    batas_notice = db.Column(db.Date, nullable=True)
+    uraian = db.Column(db.String(500), default="")
+    estimasi_biaya = db.Column(db.Float, default=0.0)
+    nilai_klaim_value = db.Column(db.Float, nullable=True)
+    dampak_waktu_hari = db.Column(db.Integer, nullable=True)
+    status_entitlement = db.Column(db.String(30), default="diajukan")
+    # anticipated|notice_terkirim|diajukan|disetujui|ditolak|disputed
+    cco_ref = db.Column(db.String(50), nullable=True)
+    catatan = db.Column(db.String(300), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spks = db.relationship("SPK", backref="variation", lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "nomor": self.nomor,
+            "rap_item_id": self.rap_item_id,
+            "sumber": self.sumber,
+            "tanggal_peristiwa": self.tanggal_peristiwa.isoformat() if self.tanggal_peristiwa else None,
+            "tanggal_notice": self.tanggal_notice.isoformat() if self.tanggal_notice else None,
+            "batas_notice": self.batas_notice.isoformat() if self.batas_notice else None,
+            "uraian": self.uraian,
+            "estimasi_biaya": self.estimasi_biaya,
+            "nilai_klaim_value": self.nilai_klaim_value,
+            "dampak_waktu_hari": self.dampak_waktu_hari,
+            "status_entitlement": self.status_entitlement,
+            "cco_ref": self.cco_ref,
+            "catatan": self.catatan,
         }
