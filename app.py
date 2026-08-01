@@ -106,6 +106,25 @@ def _parse_date_str(s):
         return None
 
 
+def _sync_rap_kode(spk):
+    """Isi rap_kode dari rap_item_id (versi asal) — identitas stabil lintas versi (Fase 7)."""
+    if spk.rap_item_id:
+        item = RapItem.query.get(spk.rap_item_id)
+        spk.rap_kode = item.kode_rap if item else None
+    return spk
+
+
+def _validate_allocation(alokasi, data):
+    """alokasi_biaya wajib konsisten dengan FK yang diisi — tanpa opsi 'lain-lain'."""
+    if alokasi == "rap_item" and not data.get("rap_item_id"):
+        return "alokasi_biaya=rap_item wajib punya rap_item_id"
+    if alokasi == "prelim" and not data.get("prelim_item_id"):
+        return "alokasi_biaya=prelim wajib punya prelim_item_id"
+    if alokasi == "variation" and not data.get("variation_id"):
+        return "alokasi_biaya=variation wajib punya variation_id"
+    return None
+
+
 def audit(action, entity="", entity_id=None, detail=""):
     log = AuditLog(
         user=current_user(),
@@ -317,18 +336,33 @@ def add_spk(subcon_id):
     contract = float(request.form.get("contract_value", 0) or 0)
     ret_pct = float(request.form.get("retention_pct", config.DEFAULT_RETENTION_PCT) or config.DEFAULT_RETENTION_PCT)
     ret_date_raw = request.form.get("retention_release_date", "").strip()
+    alokasi = request.form.get("alokasi_biaya", "rap_item")
 
     if not spk_number:
         flash("Nomor SPK/PO tidak boleh kosong.", "danger")
+        return redirect(url_for("subcon_detail", subcon_id=subcon_id))
+
+    form_data = {
+        "rap_item_id": request.form.get("rap_item_id") or None,
+        "prelim_item_id": request.form.get("prelim_item_id") or None,
+        "variation_id": request.form.get("variation_id") or None,
+    }
+    alloc_err = _validate_allocation(alokasi, form_data)
+    if alloc_err:
+        flash(alloc_err, "danger")
         return redirect(url_for("subcon_detail", subcon_id=subcon_id))
 
     ret_date = _parse_date_str(ret_date_raw)
 
     project = _default_project()
     spk = SPK(vendor_id=subcon_id, project_id=project.id,
-              spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
+              spk_number=spk_number, jenis="SPK", alokasi_biaya=alokasi,
+              rap_item_id=form_data["rap_item_id"],
+              prelim_item_id=form_data["prelim_item_id"],
+              variation_id=form_data["variation_id"],
               work_description=desc, contract_value=contract,
               retention_pct=ret_pct, retention_release_date=ret_date)
+    _sync_rap_kode(spk)
     db.session.add(spk)
     db.session.flush()
     audit("add_spk", "spk", spk.id,
@@ -442,6 +476,7 @@ def upload_preview():
                         total_additions=_max_variation(spk_number)[0],
                         total_reductions=_max_variation(spk_number)[1]
                     )
+                    _sync_rap_kode(spk)
                     db.session.add(spk)
                     db.session.flush()
                     audit("add_spk", "spk", spk.id,
@@ -476,6 +511,7 @@ def upload_preview():
                             total_additions=_max_variation(spk_number)[0],
                             total_reductions=_max_variation(spk_number)[1]
                         )
+                        _sync_rap_kode(spk)
                         db.session.add(spk)
                         db.session.flush()
                         audit("add_spk", "spk", spk.id,
@@ -647,11 +683,23 @@ def manual_input():
             if not spk_number:
                 flash("Nomor SPK/PO tidak boleh kosong.", "danger")
                 return render_template("manual_input.html", subcons=subcons_list)
+            alokasi = request.form.get("alokasi_biaya", "rap_item")
+            form_data = {
+                "rap_item_id": request.form.get("rap_item_id") or None,
+                "prelim_item_id": None,
+                "variation_id": None,
+            }
+            alloc_err = _validate_allocation(alokasi, form_data)
+            if alloc_err:
+                flash(alloc_err, "danger")
+                return render_template("manual_input.html", subcons=subcons_list)
             project = _default_project()
             spk = SPK(vendor_id=vendor.id, project_id=project.id,
-                      spk_number=spk_number, jenis="SPK", alokasi_biaya="rap_item",
+                      spk_number=spk_number, jenis="SPK", alokasi_biaya=alokasi,
+                      rap_item_id=form_data["rap_item_id"],
                       work_description=request.form.get("new_work_desc", "").strip(),
                       contract_value=0)
+            _sync_rap_kode(spk)
             db.session.add(spk)
             db.session.flush()
             audit("add_spk", "spk", spk.id,
@@ -876,9 +924,12 @@ def api_rap_items():
     faktor = float(data.get("faktor", 1) or 1)
     hsat = float(data.get("hsat_rap", 0) or 0)
     vol_rap = vol_boq * faktor
+    kode_rap = (data.get("kode_rap") or "").strip()
+    if not kode_rap:
+        return jsonify({"error": "kode_rap wajib terisi — item tanpa kode tidak bisa dilacak komitmennya (Fase 7)"}), 400
     item = RapItem(
         project_id=project_id, rap_version_id=version_id,
-        kode_rap=data.get("kode_rap", ""),
+        kode_rap=kode_rap,
         boq_item_id=data.get("boq_item_id") or None,
         uraian_baku=data.get("uraian_baku", ""),
         jenis_biaya=data.get("jenis_biaya", "material"),
@@ -901,6 +952,8 @@ def api_rap_items():
 def api_rap_items_update(item_id):
     item = RapItem.query.get_or_404(item_id)
     data = request.get_json(force=True) or {}
+    if "kode_rap" in data and not (data.get("kode_rap") or "").strip():
+        return jsonify({"error": "kode_rap wajib terisi — item tanpa kode tidak bisa dilacak komitmennya (Fase 7)"}), 400
     for k in ("kode_rap", "uraian_baku", "jenis_biaya", "satuan", "sumber_harga", "catatan"):
         if k in data:
             setattr(item, k, data[k])
@@ -1108,6 +1161,9 @@ def api_variations():
         dampak_waktu_hari=data.get("dampak_waktu_hari"),
         status_entitlement=data.get("status_entitlement", "diajukan"),
         cco_ref=data.get("cco_ref"))
+    if v.rap_item_id:
+        ri = RapItem.query.get(v.rap_item_id)
+        v.rap_kode = ri.kode_rap if ri else None
     db.session.add(v)
     db.session.flush()
     audit("add_variation", "variation", v.id,
@@ -1394,21 +1450,24 @@ def api_vendor_history(vendor_id):
         # (misal SPK tambahan 120jt dari item 481.95jt), unit price bakal menyesatkan.
         unit_price = None
         uraian = spk.work_description or ""
-        if spk.rap_item:
-            uraian = spk.rap_item.uraian_baku
-            full_scope = (spk.rap_item.total_rap > 0
-                          and spk.final_contract >= spk.rap_item.total_rap * 0.8)
-            if (full_scope and spk.rap_item.vol_rap and spk.rap_item.vol_rap > 0
+        # rap_item di sini = versi RAP yang berlaku saat SPK terbit (jejak historis),
+        # lookup eksplisit — RapItem.spks sekarang property berbasis kode, bukan backref.
+        rap_item = RapItem.query.get(spk.rap_item_id) if spk.rap_item_id else None
+        if rap_item:
+            uraian = rap_item.uraian_baku
+            full_scope = (rap_item.total_rap > 0
+                          and spk.final_contract >= rap_item.total_rap * 0.8)
+            if (full_scope and rap_item.vol_rap and rap_item.vol_rap > 0
                     and spk.final_contract > 0):
-                unit_price = spk.final_contract / spk.rap_item.vol_rap
-        if spk.rap_item and uraian:
+                unit_price = spk.final_contract / rap_item.vol_rap
+        if rap_item and uraian:
             materials.setdefault(uraian, []).append({
                 "project_nama": project.nama if project else "—",
                 "tanggal_terbit": spk.tanggal_terbit.isoformat() if spk.tanggal_terbit else None,
                 "nilai": spk.final_contract,
                 "unit_price": unit_price,
-                "vol_rap": spk.rap_item.vol_rap if spk.rap_item else None,
-                "hsat_rap": spk.rap_item.hsat_rap if spk.rap_item else None,
+                "vol_rap": rap_item.vol_rap if rap_item else None,
+                "hsat_rap": rap_item.hsat_rap if rap_item else None,
                 "lead_time_hari": lt,
             })
         rows.append({

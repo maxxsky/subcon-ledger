@@ -155,13 +155,13 @@ def main():
 
     # ── spks (tanpa SPK-004 yang butuh variations — tabel Fase 3) ──
     s.add_all([
-        SPK(id=1, project_id=1, vendor_id=1, rap_item_id=102,
+        SPK(id=1, project_id=1, vendor_id=1, rap_item_id=102, rap_kode="3.2.1",
             spk_number="SPK-001/NRC-SBW/2026", jenis="PO",
             work_description="Pengadaan Beton Ready Mix K-300 Lt.2",
             contract_value=477405000, total_additions=0, total_reductions=0,
             retention_pct=0, tanggal_terbit=d("2026-04-08"), status="aktif",
             alokasi_biaya="rap_item"),
-        SPK(id=2, project_id=1, vendor_id=3, rap_item_id=106,
+        SPK(id=2, project_id=1, vendor_id=3, rap_item_id=106, rap_kode="3.3.1",
             spk_number="SPK-002/NRC-SBW/2026", jenis="SPK",
             work_description="Subkon Bekisting Kolom & Balok Lt.2",
             contract_value=300000000, total_additions=15000000, total_reductions=0,
@@ -233,13 +233,25 @@ def main():
     ])
 
     # ── Vendor 2 (PT Baja Utama Lombok) dipakai di proyek 1 DAN proyek 2 — uji lintas proyek ──
+    # Proyek 2 dapat rap_version + rap_item minimal supaya SPK-201 konsisten
+    # (alokasi rap_item → wajib punya rap_item_id, lihat Fase 7 Bagian D).
     s.add_all([
-        SPK(id=101, project_id=1, vendor_id=2, rap_item_id=103,
+        RapVersion(id=3, project_id=2, versi="v1.0", tanggal=d("2026-05-25"),
+                   status="aktif", disusun_oleh="Brahma",
+                   catatan_revisi="Baseline ruko"),
+        RapItem(id=201, project_id=2, rap_version_id=3, kode_rap="1.1",
+                uraian_baku="Besi Beton Struktur Ruko", jenis_biaya="material",
+                satuan="kg", vol_boq=25000, faktor=1.05, vol_rap=26250,
+                hsat_rap=13200, total_rap=346500000,
+                sumber_harga="penawaran", is_consumable=False),
+    ])
+    s.add_all([
+        SPK(id=101, project_id=1, vendor_id=2, rap_item_id=103, rap_kode="3.2.2",
             spk_number="SPK-006/NRC-SBW/2026", jenis="PO",
             work_description="Pengadaan Besi Ulir D16 tambahan",
             contract_value=120000000, tanggal_terbit=d("2026-05-15"), status="aktif",
             alokasi_biaya="rap_item"),
-        SPK(id=201, project_id=2, vendor_id=2,
+        SPK(id=201, project_id=2, vendor_id=2, rap_item_id=201, rap_kode="1.1",
             spk_number="SPK-001/RUKO-MTR/2026", jenis="PO",
             work_description="Pengadaan besi beton struktur ruko",
             contract_value=350000000, tanggal_terbit=d("2026-06-10"), status="aktif",

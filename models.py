@@ -147,6 +147,7 @@ class SPK(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_spks_project_id"), nullable=False)
     # Kolom FK fase berikutnya — int nullable sekarang, constraint ditambah saat tabel tujuan ada
     rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_spks_rap_item_id"), nullable=True)            # FK Fase 2
+    rap_kode = db.Column(db.String(50), nullable=True, index=True)   # identitas stabil item LINTAS VERSI (Fase 7)
     procurement_request_id = db.Column(db.Integer, db.ForeignKey("procurement_requests.id", name="fk_spks_procurement_request_id"), nullable=True)  # FK Fase 3
     prelim_item_id = db.Column(db.Integer, db.ForeignKey("prelim_items.id", name="fk_spks_prelim_item_id"), nullable=True)      # FK Fase 2
     variation_id = db.Column(db.Integer, db.ForeignKey("variations.id", name="fk_spks_variation_id"), nullable=True)            # FK Fase 3
@@ -478,6 +479,10 @@ class RapVersion(db.Model):
 class RapItem(db.Model):
     """Satu baris RAP = satu keputusan pengadaan."""
     __tablename__ = "rap_items"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "rap_version_id", "kode_rap",
+                            name="uq_rap_item_proyek_versi_kode"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_rap_items_project_id"), nullable=False)
@@ -497,8 +502,27 @@ class RapItem(db.Model):
     catatan = db.Column(db.String(300), default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    spks = db.relationship("SPK", backref="rap_item", lazy=True)
-    variations = db.relationship("Variation", backref="rap_item", lazy=True)
+    # ── SPK yang menunjuk item ini LINTAS VERSI RAP — via kode_rap, bukan id (Fase 7) ──
+    # rap_item baru dibuat tiap revisi RAP, tapi SPK tetap menunjuk barang yang sama.
+    # Kalau pakai FK id, terikat jadi nol setiap kali RAP direvisi.
+    @property
+    def spks(self):
+        if not self.kode_rap:
+            return []
+        return SPK.query.filter_by(
+            project_id=self.project_id,
+            rap_kode=self.kode_rap,
+        ).all()
+
+    # ── Variation yang menunjuk item ini LINTAS VERSI — pola sama seperti spks ──
+    @property
+    def variations(self):
+        if not self.kode_rap:
+            return []
+        return Variation.query.filter_by(
+            project_id=self.project_id,
+            rap_kode=self.kode_rap,
+        ).all()
 
     # ── Angka turunan (on-query, tidak disimpan) ──
     @property
@@ -754,6 +778,7 @@ class Variation(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", name="fk_variations_project_id"), nullable=False)
     nomor = db.Column(db.String(50), nullable=True)   # nullable — VAR-004 anticipated tanpa nomor
     rap_item_id = db.Column(db.Integer, db.ForeignKey("rap_items.id", name="fk_variations_rap_item_id"), nullable=True)
+    rap_kode = db.Column(db.String(50), nullable=True, index=True)   # identitas stabil LINTAS VERSI (Fase 7)
     sumber = db.Column(db.String(30), default="instruksi")  # instruksi|revisi_gambar|revisi_spek|delay_owner
     tanggal_peristiwa = db.Column(db.Date, nullable=True)
     tanggal_notice = db.Column(db.Date, nullable=True)
