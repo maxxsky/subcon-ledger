@@ -12,6 +12,28 @@
   </div>
 </div>
 
+<div id="leadTimeSummary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px"></div>
+
+<div class="card" style="margin-bottom:18px">
+  <div class="card-h">
+    <div class="t">Harga Historis per Material</div>
+    <div style="font-size:11px;color:var(--ink-3)">unit price = nilai SPK / volume item RAP · ▲▼ tren kejadian pertama → terakhir</div>
+  </div>
+  <div class="card-b flush">
+    <div style="overflow-x:auto">
+    <table class="tbl" style="white-space:nowrap" id="matTable">
+      <thead><tr>
+        <th>Material</th><th class="r">Kejadian</th><th class="r">Avg Unit</th>
+        <th class="r">Min/Max</th><th class="r">Tren</th><th class="r">vs RAP</th>
+      </tr></thead>
+      <tbody id="matBody">
+        <tr><td colspan="6" style="text-align:center;color:var(--ink-3);padding:24px">Memuat…</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-h">
     <div class="t">Riwayat SPK Lintas Proyek</div>
@@ -35,27 +57,100 @@
 
 {% block extra_js %}
 <script>
+function fmtJt(v) { return (v/1e6).toFixed(2) + 'Jt'; }
+
 fetch('/api/vendors/{{ vendor.id }}/history')
   .then(r => r.json())
   .then(d => {
+    // ── lead time summary ──
+    const ltBox = document.getElementById('leadTimeSummary');
+    if (d.lead_time) {
+      const lt = d.lead_time;
+      ltBox.innerHTML = `
+        <div class="card"><div class="card-b" style="padding:14px 18px">
+          <div class="eyebrow">Lead Time Rata-rata</div>
+          <div class="num" style="font-size:26px;font-weight:600;color:${lt.avg > 14 ? 'var(--alert)' : 'var(--ink)'}">${lt.avg} <span style="font-size:13px">hari</span></div>
+          <div style="font-size:11px;color:var(--ink-3)">${lt.count} SPK</div>
+        </div></div>
+        <div class="card"><div class="card-b" style="padding:14px 18px">
+          <div class="eyebrow">Rentang</div>
+          <div class="num" style="font-size:26px;font-weight:600">${lt.min}–${lt.max} <span style="font-size:13px">hari</span></div>
+          <div style="font-size:11px;color:var(--ink-3)">min – max</div>
+        </div></div>
+        <div class="card"><div class="card-b" style="padding:14px 18px">
+          <div class="eyebrow">Telat (&gt;14 hari)</div>
+          <div class="num" style="font-size:26px;font-weight:600;color:${lt.telat_count ? 'var(--alert)' : 'var(--paid)'}">${lt.telat_count}</div>
+          <div style="font-size:11px;color:var(--ink-3)">dari ${lt.count} SPK</div>
+        </div></div>
+        <div class="card"><div class="card-b" style="padding:14px 18px">
+          <div class="eyebrow">Vendor</div>
+          <div class="num" style="font-size:26px;font-weight:600">${d.spks.length}</div>
+          <div style="font-size:11px;color:var(--ink-3)">total SPK</div>
+        </div></div>`;
+    } else {
+      ltBox.innerHTML = '<div class="card"><div class="card-b" style="color:var(--ink-3);font-size:12px;padding:16px">Belum ada data lead time.</div></div>';
+    }
+
+    // ── material summary ──
+    const matBody = document.getElementById('matBody');
+    if (!d.materials.length) {
+      matBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada material dari SPK vendor ini.</td></tr>';
+    } else {
+      matBody.innerHTML = d.materials.map(m => {
+        const trend = m.trend_pct;
+        const trendHtml = trend == null ? '—'
+          : `<span style="color:${trend > 3 ? 'var(--alert)' : trend < -3 ? 'var(--paid)' : 'var(--ink-3)'};font-weight:700">${trend > 0 ? '▲' : trend < 0 ? '▼' : '▬'} ${Math.abs(trend).toFixed(1)}%</span>`;
+        const vsRap = m.avg_unit_price != null && m.avg_hsat_rap != null
+          ? `<span style="color:${m.avg_unit_price > m.avg_hsat_rap * 1.05 ? 'var(--alert)' : 'var(--ink-2)'}">${(m.avg_unit_price / m.avg_hsat_rap * 100).toFixed(0)}%</span>`
+          : '—';
+        return `<tr style="font-size:12px" class="click" onclick="toggleMat(${m.count})">
+          <td style="font-weight:600">${m.uraian}</td>
+          <td class="r num">${m.count}</td>
+          <td class="r num">${m.avg_unit_price != null ? 'Rp ' + Math.round(m.avg_unit_price).toLocaleString() : '—'}</td>
+          <td class="r num" style="font-size:11px;color:var(--ink-3)">${m.min_unit_price != null ? Math.round(m.min_unit_price).toLocaleString() + ' – ' + Math.round(m.max_unit_price).toLocaleString() : '—'}</td>
+          <td class="r num">${trendHtml}</td>
+          <td class="r num">${vsRap}</td>
+        </tr>
+        <tr class="subrow" id="matDet-${m.count}" style="display:none"><td colspan="6">
+          <table class="tbl" style="background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius)">
+            <thead><tr><th>Proyek</th><th>Terbit</th><th class="r">Nilai</th><th class="r">Vol RAP</th><th class="r">Unit Price</th><th class="r">Harga RAP</th><th class="r">LT</th></tr></thead>
+            <tbody>${m.entries.map(e => `<tr style="font-size:11px">
+              <td>${e.project_nama}</td><td class="num">${e.tanggal_terbit || '—'}</td>
+              <td class="r num">${fmtJt(e.nilai)}</td>
+              <td class="r num">${e.vol_rap != null ? Math.round(e.vol_rap).toLocaleString() : '—'}</td>
+              <td class="r num">${e.unit_price != null ? 'Rp ' + Math.round(e.unit_price).toLocaleString() : '—'}</td>
+              <td class="r num">${e.hsat_rap != null ? 'Rp ' + Math.round(e.hsat_rap).toLocaleString() : '—'}</td>
+              <td class="r num">${e.lead_time_hari != null ? e.lead_time_hari + 'h' : '—'}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </td></tr>`;
+      }).join('');
+    }
+
+    // ── SPK history ──
     const body = document.getElementById('histBody');
     if (!d.spks.length) {
       body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--ink-3);padding:24px">Belum ada SPK untuk vendor ini.</td></tr>';
-      return;
+    } else {
+      body.innerHTML = d.spks.map(s => `
+        <tr style="font-size:12px">
+          <td style="font-weight:500">${s.project_nama}</td>
+          <td>${s.nomor}</td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${s.rap_item_uraian || '—'}</td>
+          <td class="r num">${fmtJt(s.nilai)}</td>
+          <td class="num" style="font-size:11px">${s.tanggal_terbit || '—'}</td>
+          <td class="r num" style="color:${s.lead_time_hari != null && s.lead_time_hari > 14 ? 'var(--alert)' : 'var(--ink-2)'}">${s.lead_time_hari != null ? s.lead_time_hari + ' hari' : '—'}</td>
+          <td><span class="chip chip-mute">${s.status}</span></td>
+        </tr>`).join('');
     }
-    body.innerHTML = d.spks.map(s => `
-      <tr style="font-size:12px">
-        <td style="font-weight:500">${s.project_nama}</td>
-        <td><a href="/subcons/${s.project_id ? '' : ''}">${s.nomor}</a></td>
-        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${s.rap_item_uraian || '—'}</td>
-        <td class="r num">${(s.nilai/1e6).toFixed(2)}Jt</td>
-        <td class="num" style="font-size:11px">${s.tanggal_terbit || '—'}</td>
-        <td class="r num" style="color:${s.lead_time_hari != null && s.lead_time_hari > 14 ? 'var(--alert)' : 'var(--ink-2)'}">${s.lead_time_hari != null ? s.lead_time_hari + ' hari' : '—'}</td>
-        <td><span class="chip chip-mute">${s.status}</span></td>
-      </tr>`).join('');
   })
   .catch(() => {
     document.getElementById('histBody').innerHTML = '<tr><td colspan="7" style="color:var(--alert);padding:24px">Gagal memuat.</td></tr>';
   });
+
+function toggleMat(n) {
+  const el = document.getElementById('matDet-' + n);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
 </script>
 {% endblock %}

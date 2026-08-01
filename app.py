@@ -1382,8 +1382,35 @@ def api_vendor_history(vendor_id):
     spks = SPK.query.filter_by(vendor_id=vendor_id) \
                     .order_by(SPK.tanggal_terbit.is_(None), SPK.tanggal_terbit.asc()).all()
     rows = []
+    materials = {}   # uraian_baku → list harga komitmen efektif per unit
+    lead_times = []
     for spk in spks:
         project = Project.query.get(spk.project_id) if spk.project_id else None
+        lt = spk.lead_time_days
+        if lt is not None:
+            lead_times.append(lt)
+        # Harga komitmen efektif per unit item RAP (final_contract / vol_rap).
+        # Hanya kalau SPK mendekati full-scope item (>=80% total_rap) — kalau parsial
+        # (misal SPK tambahan 120jt dari item 481.95jt), unit price bakal menyesatkan.
+        unit_price = None
+        uraian = spk.work_description or ""
+        if spk.rap_item:
+            uraian = spk.rap_item.uraian_baku
+            full_scope = (spk.rap_item.total_rap > 0
+                          and spk.final_contract >= spk.rap_item.total_rap * 0.8)
+            if (full_scope and spk.rap_item.vol_rap and spk.rap_item.vol_rap > 0
+                    and spk.final_contract > 0):
+                unit_price = spk.final_contract / spk.rap_item.vol_rap
+        if spk.rap_item and uraian:
+            materials.setdefault(uraian, []).append({
+                "project_nama": project.nama if project else "—",
+                "tanggal_terbit": spk.tanggal_terbit.isoformat() if spk.tanggal_terbit else None,
+                "nilai": spk.final_contract,
+                "unit_price": unit_price,
+                "vol_rap": spk.rap_item.vol_rap if spk.rap_item else None,
+                "hsat_rap": spk.rap_item.hsat_rap if spk.rap_item else None,
+                "lead_time_hari": lt,
+            })
         rows.append({
             "spk_id": spk.id,
             "project_nama": project.nama if project else "—",
@@ -1391,12 +1418,55 @@ def api_vendor_history(vendor_id):
             "nomor": spk.spk_number,
             "tanggal_terbit": spk.tanggal_terbit.isoformat() if spk.tanggal_terbit else None,
             "nilai": spk.final_contract,
-            "rap_item_uraian": (spk.rap_item.uraian_baku if spk.rap_item
-                                else spk.work_description or ""),
-            "lead_time_hari": spk.lead_time_days,
+            "rap_item_uraian": uraian,
+            "lead_time_hari": lt,
             "status": spk.status,
         })
-    return jsonify({"vendor": vendor.to_dict(), "spks": rows})
+
+    # Agregasi harga per material: rata-rata unit price + tren (pertama vs terakhir)
+    material_summary = []
+    for uraian, entries in sorted(materials.items()):
+        priced = [e for e in entries if e["unit_price"] is not None]
+        prices = sorted(priced, key=lambda e: e["tanggal_terbit"] or "")
+        entry = {
+            "uraian": uraian,
+            "count": len(entries),
+            "entries": entries,
+        }
+        if prices:
+            entry["avg_unit_price"] = sum(e["unit_price"] for e in prices) / len(prices)
+            entry["min_unit_price"] = min(e["unit_price"] for e in prices)
+            entry["max_unit_price"] = max(e["unit_price"] for e in prices)
+            entry["first_price"] = prices[0]["unit_price"]
+            entry["last_price"] = prices[-1]["unit_price"]
+            entry["trend_pct"] = ((prices[-1]["unit_price"] / prices[0]["unit_price"]) - 1) * 100 if prices[0]["unit_price"] else 0
+            entry["avg_hsat_rap"] = sum(e["hsat_rap"] for e in entries if e["hsat_rap"]) / sum(1 for e in entries if e["hsat_rap"]) if any(e["hsat_rap"] for e in entries) else None
+        else:
+            entry["avg_unit_price"] = None
+            entry["min_unit_price"] = None
+            entry["max_unit_price"] = None
+            entry["first_price"] = None
+            entry["last_price"] = None
+            entry["trend_pct"] = None
+            entry["avg_hsat_rap"] = None
+        material_summary.append(entry)
+
+    lt_summary = None
+    if lead_times:
+        lt_summary = {
+            "count": len(lead_times),
+            "avg": round(sum(lead_times) / len(lead_times), 1),
+            "min": min(lead_times),
+            "max": max(lead_times),
+            "telat_count": sum(1 for lt in lead_times if lt > 14),
+        }
+
+    return jsonify({
+        "vendor": vendor.to_dict(),
+        "spks": rows,
+        "materials": material_summary,
+        "lead_time": lt_summary,
+    })
 
 
 @app.route("/vendors/<int:vendor_id>")
